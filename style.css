@@ -1454,3 +1454,30 @@ body {
   border-radius: 3px;
   overflow: hidden;
 }
+
+/* Status Links in Device Details */
+.status-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  color: var(--text-primary);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  cursor: pointer;
+}
+
+.status-link:hover {
+  opacity: 0.85;
+}
+
+.status-link .status-arrow {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: normal;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.status-link:hover .status-arrow {
+  transform: translateX(2px);
+  color: var(--accent-primary);
+}

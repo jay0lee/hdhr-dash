@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.22" />
+  <link rel="stylesheet" href="style.css?v=2.0.23" />
 </head>
 <body>
   <div class="app-shell">
@@ -249,7 +249,20 @@
                   <button id="btn-check-firmware" class="btn btn-xs btn-secondary" title="Check for firmware updates">🔄 Check</button>
                 </div>
               </div>
-              <div class="info-row"><span class="info-label">Tuners</span><span id="info-tuners" class="info-val">—</span></div>
+              <div class="info-row">
+                <span class="info-label">Tuners</span>
+                <a href="#tuners" class="status-link" title="View Tuners tab">
+                  <span id="info-tuners" class="info-val">—</span>
+                  <span class="status-arrow">↗</span>
+                </a>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Channels</span>
+                <a href="#channels" class="status-link" id="info-channels-link" title="View Channels tab">
+                  <span id="info-channels" class="info-val">—</span>
+                  <span class="status-arrow">↗</span>
+                </a>
+              </div>
               <div class="info-row"><span class="info-label">IP Address</span><span id="info-ip" class="info-val font-mono">—</span></div>
               <div class="info-row">
                 <span class="info-label">Active Clients</span>
@@ -377,6 +390,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.22"></script>
+  <script src="app.js?v=2.0.23"></script>
 </body>
 </html>

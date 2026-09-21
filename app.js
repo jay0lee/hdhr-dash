@@ -88,6 +88,7 @@ const infoModel = document.getElementById('info-model');
 const infoId = document.getElementById('info-id');
 const infoFirmware = document.getElementById('info-firmware');
 const infoTuners = document.getElementById('info-tuners');
+const infoChannels = document.getElementById('info-channels');
 const infoIp = document.getElementById('info-ip');
 const infoActiveClients = document.getElementById('info-active-clients');
 const infoActiveRecordings = document.getElementById('info-active-recordings');
@@ -358,6 +359,7 @@ async function loadDeviceDetails() {
 
     // Update live HDHR status: active clients, active recordings, and storage (used/free)
     await updateSystemLiveStatus();
+    loadChannelsCount();
 
     // Check for firmware updates
     checkFirmwareUpdate(data);
@@ -499,17 +501,13 @@ async function updateSystemLiveStatus() {
     if (infoActiveClients) {
       if (activeClients.length === 0) {
         infoActiveClients.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
-      } else if (activeClients.length === 1) {
-        const c = activeClients[0];
-        infoActiveClients.innerHTML = `
-          <span class="badge badge-active-client">1 Streaming</span>
-          <span class="font-mono text-sm">${c.ip}${c.channel ? ` (${c.channel})` : ''}</span>
-        `;
       } else {
-        const ipList = activeClients.map((c) => `${c.ip}${c.channel ? ` (${c.channel})` : ''}`).join(', ');
+        const countText = activeClients.length === 1 ? '1 Streaming' : `${activeClients.length} Streaming`;
         infoActiveClients.innerHTML = `
-          <span class="badge badge-active-client">${activeClients.length} Streaming</span>
-          <span class="font-mono text-sm text-muted" title="${ipList}">${activeClients.map((c) => c.ip).join(', ')}</span>
+          <a href="#tuners" class="status-link" title="View details on Tuners tab">
+            <span class="badge badge-active-client">${countText}</span>
+            <span class="status-arrow">Tuners ↗</span>
+          </a>
         `;
       }
     }
@@ -519,10 +517,12 @@ async function updateSystemLiveStatus() {
       if (activeRecordings.length === 0) {
         infoActiveRecordings.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
       } else {
-        const recList = activeRecordings.map((r) => r.channel).join(', ');
+        const countText = activeRecordings.length === 1 ? '1 Active' : `${activeRecordings.length} Active`;
         infoActiveRecordings.innerHTML = `
-          <span class="badge badge-active-record">🔴 ${activeRecordings.length} Active</span>
-          <span class="text-sm font-semibold">${recList}</span>
+          <a href="#recordings" class="status-link" title="View details on Recordings tab">
+            <span class="badge badge-active-record">🔴 ${countText}</span>
+            <span class="status-arrow">Recordings ↗</span>
+          </a>
         `;
       }
     }
@@ -568,6 +568,40 @@ async function updateSystemLiveStatus() {
     }
   } catch (err) {
     console.warn('Error updating system live status:', err);
+  }
+}
+
+function renderChannelsCount(allowed, total) {
+  if (!infoChannels) return;
+  if (total === 0) {
+    infoChannels.textContent = '0 Channels';
+  } else if (allowed === total) {
+    infoChannels.textContent = `${total} Channels`;
+  } else {
+    infoChannels.innerHTML = `<span>${allowed} Accessible <span class="text-sm text-muted">(${total} Total)</span></span>`;
+  }
+}
+
+async function loadChannelsCount() {
+  if (state.lineup && state.lineup.length > 0) {
+    const allowed = state.lineup.filter((ch) => ch.Enabled !== 0).length;
+    renderChannelsCount(allowed, state.lineup.length);
+    return;
+  }
+
+  const ip = state.currentIp;
+  try {
+    const res = await fetch(`http://${ip}/lineup.json?show=found`);
+    if (res.ok) {
+      const lineup = await res.json();
+      if (Array.isArray(lineup)) {
+        state.lineup = lineup;
+        const allowed = lineup.filter((ch) => ch.Enabled !== 0).length;
+        renderChannelsCount(allowed, lineup.length);
+      }
+    }
+  } catch (e) {
+    console.warn('Could not load channels count for system view:', e);
   }
 }
 
@@ -630,6 +664,22 @@ function setupDeviceManagement() {
       await loadDeviceDetails();
       btnRefreshSystemStatus.textContent = '🔄 Refresh';
       btnRefreshSystemStatus.disabled = false;
+    });
+  }
+
+  // Handle in-app navigation links from Device Details
+  const deviceInfoList = document.getElementById('device-info-list');
+  if (deviceInfoList) {
+    deviceInfoList.addEventListener('click', (e) => {
+      const link = e.target.closest('a[href^="#"]');
+      if (link) {
+        e.preventDefault();
+        const hash = link.getAttribute('href').replace('#', '').toLowerCase();
+        const target = hash === 'channels' ? 'lineup' : hash;
+        if (['tuners', 'lineup', 'recordings', 'system'].includes(target)) {
+          switchTab(target);
+        }
+      }
     });
   }
 
@@ -956,6 +1006,7 @@ async function fetchLineup() {
     lineupCountBadge.textContent = allowedChannels.length;
     lineupCountBadge.classList.remove('hidden');
 
+    renderChannelsCount(allowedChannels.length, state.lineup.length);
     renderLineup();
   } catch (err) {
     console.warn('Error fetching lineup:', err);
