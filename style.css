@@ -926,6 +926,7 @@ body {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+  flex-wrap: wrap;
 }
 
 /* Scheduled Rules */

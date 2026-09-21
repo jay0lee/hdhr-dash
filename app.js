@@ -1029,6 +1029,11 @@ function renderEpisodes(episodes) {
       `;
     }
 
+    const filenameParts = [ep.Title || 'Recording'];
+    if (ep.EpisodeNumber) filenameParts.push(ep.EpisodeNumber);
+    if (ep.EpisodeTitle) filenameParts.push(ep.EpisodeTitle);
+    const suggestedFilename = filenameParts.join(' - ').replace(/[^a-zA-Z0-9_\- ]/g, '_').trim() + '.mpg';
+
     card.innerHTML = `
       <div class="recording-top">
         <img src="${posterUrl}" class="recording-poster" alt="${ep.Title || 'Show'}" loading="lazy" onerror="this.src='icon.svg'" />
@@ -1047,8 +1052,17 @@ function renderEpisodes(episodes) {
       </div>
 
       <div class="recording-actions">
-        ${playUrl ? `<button class="btn btn-sm btn-primary btn-copy-url" data-url="${playUrl}" title="Copy recording URL to paste in VLC / media player">📋 Copy Link</button>` : ''}
-        ${playUrl ? `<button class="btn btn-sm btn-secondary btn-download-m3u" data-num="${ep.GuideNumber || ''}" data-name="${(ep.Title || 'Recording') + (ep.EpisodeTitle ? ' - ' + ep.EpisodeTitle : '')}" data-url="${playUrl}" title="Download .m3u to open recording directly in VLC">📺 M3U</button>` : ''}
+        ${playUrl ? `
+          <a href="${playUrl}" download="${suggestedFilename}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-primary" title="Download the full recorded video file (${suggestedFilename})">
+            ⬇️ Download (.mpg)
+          </a>
+          <button class="btn btn-sm btn-secondary btn-copy-url" data-url="${playUrl}" title="Copy direct download link (for curl, wget, or download managers)">
+            📋 Copy Link
+          </button>
+          <button class="btn btn-sm btn-secondary btn-download-m3u" data-num="${ep.GuideNumber || ep.ChannelNumber || ''}" data-name="${suggestedFilename.replace(/\.mpg$/, '')}" data-url="${playUrl}" title="Stream immediately in VLC via .m3u without downloading the full file">
+            📺 Stream (M3U)
+          </button>
+        ` : ''}
       </div>
     `;
 
