@@ -657,14 +657,14 @@ function renderLineup() {
     }
 
     const atscBadge = isAtsc3
-      ? '<span class="badge badge-atsc3" title="ATSC 3.0 (NextGen TV)">ATSC 3.0</span>'
-      : '<span class="badge" title="ATSC 1.0 (Standard Digital)">ATSC 1.0</span>';
+      ? '<span class="badge badge-atsc3" title="ATSC 3.0 (NextGen TV)">ATSC3</span>'
+      : '<span class="badge" title="ATSC 1.0 (Standard Digital)">ATSC1</span>';
 
     const drmBadge = isDrm
       ? '<span class="badge badge-drm" title="Encrypted with ATSC 3.0 DRM">🔒 DRM</span>'
       : '';
 
-    // Signal Quality meter
+    // Signal Quality meter (colors with % in tooltip)
     let signalHtml = '<span class="text-muted">—</span>';
     if (ch.SignalQuality != null || ch.SignalStrength != null) {
       const sq = ch.SignalQuality ?? ch.SignalStrength;
@@ -673,13 +673,12 @@ function renderLineup() {
       if (sq >= 80) gradeClass = 'good';
       else if (sq >= 60) gradeClass = 'fair';
 
-      const tooltip = `Signal Quality: ${ch.SignalQuality ?? '—'}%${ss != null ? ` | Strength: ${ss}%` : ''}`;
+      const tooltip = `${sq}% Signal Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
       signalHtml = `
         <div class="signal-meter-wrapper" title="${tooltip}">
           <div class="signal-mini-bar">
             <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
           </div>
-          <span class="signal-value-text">${sq}%</span>
         </div>
       `;
     }

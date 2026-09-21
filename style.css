@@ -644,14 +644,14 @@ body {
 .signal-meter-wrapper {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 85px;
+  cursor: help;
 }
 
 .signal-mini-bar {
-  width: 44px;
-  height: 6px;
-  background-color: #0b1120;
+  width: 56px;
+  height: 8px;
+  background-color: #090e1a;
+  border: 1px solid var(--border-main);
   border-radius: 9999px;
   overflow: hidden;
   flex-shrink: 0;
@@ -660,12 +660,22 @@ body {
 .signal-mini-fill {
   height: 100%;
   border-radius: 9999px;
+  transition: width 0.3s ease;
 }
 
-.signal-value-text {
-  font-size: 0.78rem;
-  font-family: monospace;
-  color: var(--text-secondary);
+.signal-mini-fill.good {
+  background-color: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+.signal-mini-fill.fair {
+  background-color: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+
+.signal-mini-fill.poor {
+  background-color: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
 }
 
 .btn-drm-locked {
