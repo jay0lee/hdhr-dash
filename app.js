@@ -500,16 +500,47 @@ function renderTuners(statusItems) {
       const quality = tuner.SignalQualityPercent ?? 0;
       const symbol = tuner.SymbolQualityPercent ?? 0;
 
-      // Find real client IP if proxied through [::1]
-      let clientIp = tuner.TargetIP;
-      if (clientIp === '[::1]' || clientIp === '::1' || clientIp === '127.0.0.1') {
-        const matchingSession = liveSessions.find((s) => {
-          if (!s.Name) return false;
-          return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
-        });
-        if (matchingSession && matchingSession.TargetIP) {
-          clientIp = matchingSession.TargetIP;
+      // Find all client sessions sharing this channel/tuner
+      const clientSessions = [];
+
+      // If the tuner itself has a direct external target IP
+      if (tuner.TargetIP && tuner.TargetIP !== '[::1]' && tuner.TargetIP !== '::1' && tuner.TargetIP !== '127.0.0.1' && tuner.TargetIP !== 'none') {
+        clientSessions.push({ type: 'client', ip: tuner.TargetIP });
+      }
+
+      // Check liveSessions (Resource: "live" or "record") from status.json
+      const matchingSessions = liveSessions.filter((s) => {
+        if (!s.Name) return false;
+        return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
+      });
+
+      matchingSessions.forEach((s) => {
+        const isRecord = (s.Resource && s.Resource.toLowerCase().includes('record')) ||
+                         (s.Name && s.Name.toLowerCase().includes('record'));
+        if (!clientSessions.some((c) => c.ip === s.TargetIP && c.type === (isRecord ? 'record' : 'client'))) {
+          clientSessions.push({
+            type: isRecord ? 'record' : 'client',
+            ip: s.TargetIP || 'Local',
+            name: s.Name || '',
+          });
         }
+      });
+
+      let clientsDisplay = '';
+      if (clientSessions.length === 0) {
+        clientsDisplay = '<span>Client: <code>Local</code></span>';
+      } else if (clientSessions.length === 1) {
+        const c = clientSessions[0];
+        clientsDisplay = `<span>Client: <code>${c.type === 'record' ? '📼 DVR Record' : c.ip}</code></span>`;
+      } else {
+        clientsDisplay = `
+          <div class="tuner-shared-clients">
+            <span class="shared-clients-label">👥 Shared (${clientSessions.length} sessions):</span>
+            <div class="shared-clients-tags">
+              ${clientSessions.map((c) => `<span class="client-badge">${c.type === 'record' ? '📼 DVR' : c.ip}</span>`).join('')}
+            </div>
+          </div>
+        `;
       }
 
       // Network bitrate
@@ -520,6 +551,11 @@ function renderTuners(statusItems) {
         rateDisplay = `<span>Freq: ${(tuner.Frequency / 1000000).toFixed(3)} MHz</span>`;
       }
 
+      let sharedBadge = '';
+      if (clientSessions.length > 1) {
+        sharedBadge = `<span class="badge badge-hd" title="Tuner Sharing active: ${clientSessions.length} clients sharing this tuner">Shared (${clientSessions.length})</span>`;
+      }
+
       detailsHtml = `
         <div class="tuner-active-info">
           <div class="tuner-channel-row">
@@ -527,7 +563,7 @@ function renderTuners(statusItems) {
             <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
           </div>
           <div class="tuner-meta-row">
-            <span>Client: <code>${clientIp || 'Local'}</code></span>
+            ${clientsDisplay}
             ${rateDisplay}
           </div>
         </div>
@@ -551,6 +587,7 @@ function renderTuners(statusItems) {
         <span class="tuner-name">
           <span class="status-dot ${isActive ? 'connected' : ''}"></span>
           ${tunerName.toUpperCase()}
+          ${sharedBadge || ''}
         </span>
         <span class="tuner-status-badge ${statusClass}">${statusText}</span>
       </div>

@@ -556,8 +556,39 @@ body {
 .tuner-meta-row {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 0.8rem;
   color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+
+.tuner-shared-clients {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shared-clients-label {
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.shared-clients-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.client-badge {
+  font-size: 0.72rem;
+  font-family: monospace;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-main);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-primary);
 }
 
 /* Metric Bars */
