@@ -6,6 +6,7 @@ const STORAGE_ACTIVE_IP = 'hdhr_active_ip';
 const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
+const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
 
 // Immediately apply saved theme to documentElement to avoid flash
@@ -24,6 +25,7 @@ const state = {
   episodes: [],
   rules: [],
   dvrSubView: 'series', // 'series', 'episodes', 'rules'
+  selectedSeriesId: null,
   hasDvr: false,
   dvrStorageUrl: null,
   activeTab: 'tuners',
@@ -203,10 +205,43 @@ function setupNavigation() {
       switchTab(targetTab);
     });
   });
+
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash.replace('#', '').toLowerCase();
+    if (hash) {
+      const target = hash === 'channels' ? 'lineup' : hash;
+      if (['tuners', 'lineup', 'recordings', 'system'].includes(target)) {
+        if (state.activeTab !== target) {
+          switchTab(target, false);
+        }
+      }
+    }
+  });
+
+  // Read initial active tab from URL hash or localStorage
+  const urlHash = window.location.hash.replace('#', '').toLowerCase();
+  const savedTab = localStorage.getItem(STORAGE_ACTIVE_TAB);
+  const initialTarget = (urlHash === 'channels' ? 'lineup' : urlHash) || savedTab;
+
+  if (initialTarget && ['tuners', 'lineup', 'recordings', 'system'].includes(initialTarget)) {
+    state.activeTab = initialTarget;
+    navTabs.forEach((tab) => {
+      tab.classList.toggle('active', tab.getAttribute('data-tab') === initialTarget);
+    });
+    tabViews.forEach((view) => {
+      view.classList.toggle('active', view.id === `view-${initialTarget}`);
+    });
+    if (!window.location.hash) {
+      const hashName = initialTarget === 'lineup' ? 'channels' : initialTarget;
+      history.replaceState(null, '', `#${hashName}`);
+    }
+  }
 }
 
-function switchTab(tabId) {
+function switchTab(tabId, updateHash = true) {
+  if (tabId === 'channels') tabId = 'lineup';
   state.activeTab = tabId;
+  localStorage.setItem(STORAGE_ACTIVE_TAB, tabId);
 
   navTabs.forEach((tab) => {
     tab.classList.toggle('active', tab.getAttribute('data-tab') === tabId);
@@ -215,6 +250,13 @@ function switchTab(tabId) {
   tabViews.forEach((view) => {
     view.classList.toggle('active', view.id === `view-${tabId}`);
   });
+
+  if (updateHash) {
+    const hash = tabId === 'lineup' ? 'channels' : tabId;
+    if (window.location.hash !== `#${hash}`) {
+      history.replaceState(null, '', `#${hash}`);
+    }
+  }
 
   // Fetch tab data if needed
   refreshActiveTab();
@@ -942,6 +984,7 @@ function setupDvrPills() {
       dvrViewPills.forEach((p) => p.classList.remove('active'));
       pill.classList.add('active');
       state.dvrSubView = pill.getAttribute('data-dvr-view');
+      state.selectedSeriesId = null;
       renderCurrentDvrSubView();
     });
   });
@@ -970,9 +1013,11 @@ function updateStorageBar() {
   }
 }
 
-async function fetchRecordings() {
+async function fetchRecordings(isBackground = false) {
   const ip = state.currentIp;
-  recordingsContainer.innerHTML = '<div class="loading-placeholder">Loading DVR recordings and rules...</div>';
+  if (!isBackground) {
+    recordingsContainer.innerHTML = '<div class="loading-placeholder">Loading DVR recordings and rules...</div>';
+  }
   dvrNotDetected.classList.add('hidden');
 
   // Correctly determine storage URL: do NOT duplicate /recorded_files.json
@@ -1070,7 +1115,10 @@ function renderCurrentDvrSubView() {
 
   switch (state.dvrSubView) {
     case 'episodes':
-      renderEpisodes(state.episodes);
+      const epsToRender = state.selectedSeriesId
+        ? state.episodes.filter((ep) => ep.SeriesID === state.selectedSeriesId)
+        : state.episodes;
+      renderEpisodes(epsToRender);
       break;
     case 'series':
       renderSeries(state.series);
@@ -1083,6 +1131,25 @@ function renderCurrentDvrSubView() {
 
 function renderEpisodes(episodes) {
   if (!episodes || episodes.length === 0) {
+    if (state.selectedSeriesId) {
+      recordingsContainer.innerHTML = `
+        <div class="card empty-card" style="grid-column: 1 / -1;">
+          <div class="empty-icon">📂</div>
+          <h3>No Recorded Episodes Remaining</h3>
+          <p class="text-muted">All episodes for this series have been deleted.</p>
+          <div class="mt-12">
+            <button class="btn btn-primary btn-back-to-series">← Back to All Series</button>
+          </div>
+        </div>
+      `;
+      recordingsContainer.querySelector('.btn-back-to-series')?.addEventListener('click', () => {
+        state.selectedSeriesId = null;
+        dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'series'));
+        state.dvrSubView = 'series';
+        renderCurrentDvrSubView();
+      });
+      return;
+    }
     recordingsContainer.innerHTML = `
       <div class="card empty-card" style="grid-column: 1 / -1;">
         <div class="empty-icon">📂</div>
@@ -1094,6 +1161,25 @@ function renderEpisodes(episodes) {
   }
 
   recordingsContainer.innerHTML = '';
+
+  if (state.selectedSeriesId) {
+    const sObj = state.series.find((s) => s.SeriesID === state.selectedSeriesId);
+    const seriesTitle = sObj?.Title || episodes[0]?.Title || 'Series';
+    const headerBar = document.createElement('div');
+    headerBar.className = 'dvr-series-header-bar';
+    headerBar.innerHTML = `
+      <button class="btn btn-sm btn-secondary btn-back-to-series">← All Series</button>
+      <span style="font-weight: 600; font-size: 0.95rem;">Series: ${seriesTitle}</span>
+      <span class="text-sm text-muted">(${episodes.length} episode${episodes.length === 1 ? '' : 's'})</span>
+    `;
+    headerBar.querySelector('.btn-back-to-series')?.addEventListener('click', () => {
+      state.selectedSeriesId = null;
+      dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'series'));
+      state.dvrSubView = 'series';
+      renderCurrentDvrSubView();
+    });
+    recordingsContainer.appendChild(headerBar);
+  }
   episodes.forEach((ep, epIndex) => {
     const card = document.createElement('div');
     card.className = 'recording-card';
@@ -1325,10 +1411,10 @@ function renderSeries(seriesList) {
   recordingsContainer.querySelectorAll('.btn-view-series-episodes').forEach((btn) => {
     btn.addEventListener('click', () => {
       const sId = btn.getAttribute('data-series-id');
-      const filtered = state.episodes.filter((ep) => ep.SeriesID === sId);
+      state.selectedSeriesId = sId;
       dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'episodes'));
       state.dvrSubView = 'episodes';
-      renderEpisodes(filtered);
+      renderCurrentDvrSubView();
     });
   });
 
@@ -1427,7 +1513,7 @@ async function deleteEpisode(ep) {
     recordingsCountBadge.textContent = state.episodes.length;
     renderCurrentDvrSubView();
     // Refresh storage bar and list in background
-    setTimeout(fetchRecordings, 1200);
+    setTimeout(() => fetchRecordings(true), 1200);
   } catch (err) {
     console.error('Delete error:', err);
     showAlert(`Failed to delete recording: ${err.message}`, 'error');
@@ -1455,7 +1541,8 @@ async function deleteSeries(series, matchingEpisodes) {
   }
 
   showToast(`Deleted ${deletedCount} episode(s) of "${series.Title || 'Series'}"`);
-  setTimeout(fetchRecordings, 1000);
+  state.selectedSeriesId = null;
+  setTimeout(() => fetchRecordings(true), 1000);
 }
 
 /* ==========================================================================

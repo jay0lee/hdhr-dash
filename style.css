@@ -1407,3 +1407,16 @@ body {
   opacity: 1;
   transform: translateY(0);
 }
+
+/* DVR Series Header Bar */
+.dvr-series-header-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  grid-column: 1 / -1;
+  padding: 10px 16px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+}
