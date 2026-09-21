@@ -962,15 +962,15 @@ body {
 
 /* System & Settings View */
 .system-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 20px;
 }
 
 .info-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   margin-bottom: 16px;
 }
 
@@ -978,23 +978,27 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   font-size: 0.88rem;
   border-bottom: 1px solid var(--border-main);
-  padding-bottom: 6px;
+  padding: 8px 0;
 }
 
 .info-label {
   color: var(--text-secondary);
+  flex-shrink: 0;
 }
 
 .info-val {
   font-weight: 600;
+  word-break: break-all;
+  text-align: right;
 }
 
 .theme-options-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
   margin-top: 8px;
 }
 
@@ -1040,6 +1044,7 @@ body {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
+  max-width: 480px;
 }
 
 .device-item {
@@ -1060,6 +1065,7 @@ body {
 .ip-input-row {
   display: flex;
   gap: 8px;
+  max-width: 480px;
 }
 
 .ip-input-row input {
