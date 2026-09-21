@@ -17,7 +17,7 @@ const state = {
   series: [],
   episodes: [],
   rules: [],
-  dvrSubView: 'episodes', // 'episodes', 'series', 'rules'
+  dvrSubView: 'series', // 'series', 'episodes', 'rules'
   hasDvr: false,
   dvrStorageUrl: null,
   activeTab: 'tuners',
