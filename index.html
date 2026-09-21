@@ -12,7 +12,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.2" />
+  <link rel="stylesheet" href="style.css?v=2.0.3" />
 </head>
 <body>
   <div class="app-shell">
@@ -146,11 +146,37 @@
       <section id="view-recordings" class="tab-view">
         <div class="view-header">
           <div>
-            <h2>DVR Recordings</h2>
+            <h2>DVR & Recordings</h2>
             <p id="dvr-engine-info" class="text-muted text-sm">Detecting recording engine...</p>
           </div>
           <div class="view-actions">
             <button id="btn-refresh-recordings" class="btn btn-sm btn-secondary">↻ Refresh</button>
+          </div>
+        </div>
+
+        <!-- Storage Space Bar -->
+        <div id="dvr-storage-bar-card" class="card mb-16 hidden">
+          <div class="storage-bar-header">
+            <span class="text-sm font-semibold">💾 SSD Storage</span>
+            <span id="storage-space-text" class="text-sm text-muted font-mono">—</span>
+          </div>
+          <div class="metric-bar-bg mt-6">
+            <div id="storage-bar-fill" class="metric-bar-fill good" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Sub-Navigation Pills -->
+        <div class="filter-bar" id="dvr-filter-bar">
+          <div class="filter-pills" id="dvr-view-pills">
+            <button class="pill active" data-dvr-view="episodes">
+              Episodes <span id="episodes-count-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-dvr-view="series">
+              Series <span id="series-count-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-dvr-view="rules">
+              Scheduled Rules <span id="rules-count-pill" class="badge-pill">0</span>
+            </button>
           </div>
         </div>
 
@@ -219,6 +245,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=2.0.2"></script>
+  <script src="app.js?v=2.0.3"></script>
 </body>
 </html>

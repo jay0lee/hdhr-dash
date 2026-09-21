@@ -14,6 +14,10 @@ const state = {
   tuners: [],
   lineup: [],
   recordings: [],
+  series: [],
+  episodes: [],
+  rules: [],
+  dvrSubView: 'episodes', // 'episodes', 'series', 'rules'
   hasDvr: false,
   dvrStorageUrl: null,
   activeTab: 'tuners',
@@ -55,6 +59,13 @@ const recordingsContainer = document.getElementById('recordings-container');
 const recordingsCountBadge = document.getElementById('recordings-count-badge');
 const btnRefreshRecordings = document.getElementById('btn-refresh-recordings');
 const btnRecheckDvr = document.getElementById('btn-recheck-dvr');
+const dvrStorageBarCard = document.getElementById('dvr-storage-bar-card');
+const storageSpaceText = document.getElementById('storage-space-text');
+const storageBarFill = document.getElementById('storage-bar-fill');
+const dvrViewPills = document.querySelectorAll('#dvr-view-pills .pill');
+const episodesCountPill = document.getElementById('episodes-count-pill');
+const seriesCountPill = document.getElementById('series-count-pill');
+const rulesCountPill = document.getElementById('rules-count-pill');
 
 // System Elements
 const infoModel = document.getElementById('info-model');
@@ -76,6 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupNavigation();
   setupPollingControls();
   setupLineupFilters();
+  setupDvrPills();
   setupDeviceManagement();
   setupPwa();
 
@@ -643,48 +655,111 @@ function exportM3u() {
    DVR / Recordings
    ========================================================================== */
 
+function setupDvrPills() {
+  dvrViewPills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      dvrViewPills.forEach((p) => p.classList.remove('active'));
+      pill.classList.add('active');
+      state.dvrSubView = pill.getAttribute('data-dvr-view');
+      renderCurrentDvrSubView();
+    });
+  });
+}
+
+function updateStorageBar() {
+  if (state.deviceInfo?.TotalSpace && state.deviceInfo?.FreeSpace) {
+    dvrStorageBarCard.classList.remove('hidden');
+    const totalGb = (state.deviceInfo.TotalSpace / (1024 * 1024 * 1024)).toFixed(1);
+    const freeGb = (state.deviceInfo.FreeSpace / (1024 * 1024 * 1024)).toFixed(1);
+    const usedBytes = state.deviceInfo.TotalSpace - state.deviceInfo.FreeSpace;
+    const usedGb = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
+    const usedPercent = Math.round((usedBytes / state.deviceInfo.TotalSpace) * 100);
+
+    storageSpaceText.textContent = `${freeGb} GB free of ${totalGb} GB (${usedPercent}% used)`;
+    storageBarFill.style.width = `${usedPercent}%`;
+    if (usedPercent > 90) {
+      storageBarFill.className = 'metric-bar-fill poor';
+    } else if (usedPercent > 75) {
+      storageBarFill.className = 'metric-bar-fill fair';
+    } else {
+      storageBarFill.className = 'metric-bar-fill good';
+    }
+  } else {
+    dvrStorageBarCard.classList.add('hidden');
+  }
+}
+
 async function fetchRecordings() {
   const ip = state.currentIp;
-  recordingsContainer.innerHTML = '<div class="loading-placeholder">Searching for recordings...</div>';
+  recordingsContainer.innerHTML = '<div class="loading-placeholder">Loading DVR recordings and rules...</div>';
   dvrNotDetected.classList.add('hidden');
 
-  // Determine storage base URL (from discover.json or default port 4999 / device IP)
-  const targetUrl = state.dvrStorageUrl
-    ? `${state.dvrStorageUrl}/recorded_files.json`
-    : `http://${ip}/recorded_files.json`;
+  // Correctly determine storage URL: do NOT duplicate /recorded_files.json
+  let targetUrl = state.dvrStorageUrl || `http://${ip}/recorded_files.json`;
+  if (!targetUrl.includes('.json')) {
+    targetUrl = targetUrl.replace(/\/+$/, '') + '/recorded_files.json';
+  }
 
   try {
     let res = await fetch(targetUrl);
 
-    // If regular port 80 failed and no explicit StorageURL was provided, try port 4999 (HDHomeRun DVR default)
+    // Fallback: if port 80 failed and no explicit StorageURL was configured, try port 4999
     if (!res.ok && !state.dvrStorageUrl) {
       try {
         const altRes = await fetch(`http://${ip}:4999/recorded_files.json`);
         if (altRes.ok) {
           res = altRes;
-          state.dvrStorageUrl = `http://${ip}:4999`;
+          state.dvrStorageUrl = `http://${ip}:4999/recorded_files.json`;
         }
-      } catch (e) {
-        // Continue with original response failure
-      }
+      } catch (e) {}
     }
 
     if (!res.ok) {
       throw new Error(`DVR endpoint returned HTTP ${res.status}`);
     }
 
-    const data = await res.json();
-    if (!Array.isArray(data)) {
+    const seriesData = await res.json();
+    if (!Array.isArray(seriesData)) {
       throw new Error('Unexpected DVR response format');
     }
 
     state.hasDvr = true;
-    state.recordings = data;
-    recordingsCountBadge.textContent = data.length;
-    recordingsCountBadge.classList.remove('hidden');
-    dvrEngineInfo.textContent = `Connected to recording engine (${state.dvrStorageUrl || ip})`;
+    state.series = seriesData;
+    seriesCountPill.textContent = seriesData.length;
+    dvrEngineInfo.textContent = `Connected to recording engine (${state.deviceInfo?.FriendlyName || ip})`;
+    updateStorageBar();
 
-    renderRecordings(data);
+    // Concurrently fetch episodes for each series
+    const episodePromises = seriesData.map(async (item) => {
+      if (item.EpisodesURL) {
+        try {
+          const epRes = await fetch(item.EpisodesURL);
+          if (epRes.ok) {
+            const epJson = await epRes.json();
+            return Array.isArray(epJson) ? epJson : [];
+          }
+        } catch (e) {
+          console.warn('Could not fetch episodes for', item.Title, e);
+        }
+      } else if (item.PlayURL || item.CmdURL) {
+        return [item];
+      }
+      return [];
+    });
+
+    const allEpisodesNested = await Promise.all(episodePromises);
+    const allEpisodes = allEpisodesNested.flat();
+    allEpisodes.sort((a, b) => (b.StartTime || 0) - (a.StartTime || 0));
+
+    state.episodes = allEpisodes;
+    episodesCountPill.textContent = allEpisodes.length;
+    recordingsCountBadge.textContent = allEpisodes.length;
+    recordingsCountBadge.classList.remove('hidden');
+
+    // Also fetch scheduled recording rules from Cloud API using DeviceAuth
+    await fetchScheduledRules();
+
+    renderCurrentDvrSubView();
   } catch (err) {
     console.info('No DVR engine found or request failed:', err.message);
     state.hasDvr = false;
@@ -695,48 +770,206 @@ async function fetchRecordings() {
   }
 }
 
-function renderRecordings(recordings) {
-  if (recordings.length === 0) {
+async function fetchScheduledRules() {
+  if (!state.deviceInfo?.DeviceAuth) return;
+  try {
+    const res = await fetch(`https://api.hdhomerun.com/api/recording_rules?DeviceAuth=${state.deviceInfo.DeviceAuth}`);
+    if (res.ok) {
+      const rules = await res.json();
+      state.rules = Array.isArray(rules) ? rules : [];
+      rulesCountPill.textContent = state.rules.length;
+    }
+  } catch (e) {
+    console.warn('Could not load scheduled recording rules:', e);
+  }
+}
+
+function renderCurrentDvrSubView() {
+  if (!state.hasDvr) return;
+
+  switch (state.dvrSubView) {
+    case 'episodes':
+      renderEpisodes(state.episodes);
+      break;
+    case 'series':
+      renderSeries(state.series);
+      break;
+    case 'rules':
+      renderRules(state.rules);
+      break;
+  }
+}
+
+function renderEpisodes(episodes) {
+  if (!episodes || episodes.length === 0) {
     recordingsContainer.innerHTML = `
       <div class="card empty-card" style="grid-column: 1 / -1;">
         <div class="empty-icon">📂</div>
-        <h3>No Recordings Found</h3>
-        <p class="text-muted">The recording storage is currently empty.</p>
+        <h3>No Recorded Episodes Found</h3>
+        <p class="text-muted">No recorded episodes are currently stored on the drive.</p>
       </div>
     `;
     return;
   }
 
   recordingsContainer.innerHTML = '';
-  recordings.forEach((rec) => {
+  episodes.forEach((ep) => {
     const card = document.createElement('div');
     card.className = 'recording-card';
 
-    const recordedDate = rec.StartTime ? new Date(rec.StartTime * 1000).toLocaleDateString() : '—';
-    const durationMin = rec.Duration ? Math.round(rec.Duration / 60) + ' min' : '—';
-    const fileSizeMb = rec.FileSize ? (rec.FileSize / (1024 * 1024 * 1024)).toFixed(2) + ' GB' : '—';
-    const playUrl = rec.PlayURL || rec.CmdURL;
+    const recordedDate = ep.StartTime ? new Date(ep.StartTime * 1000).toLocaleDateString() : '—';
+    const durationMin = ep.EndTime && ep.StartTime ? Math.round((ep.EndTime - ep.StartTime) / 60) + ' min' : (ep.Duration ? Math.round(ep.Duration / 60) + ' min' : '—');
+    const playUrl = ep.PlayURL || ep.CmdURL;
+    const posterUrl = ep.ImageURL || 'icon.svg';
+
+    let channelDisplay = '';
+    if (ep.ChannelName || ep.ChannelNumber) {
+      channelDisplay = `
+        <span class="channel-tag">
+          ${ep.ChannelImageURL ? `<img src="${ep.ChannelImageURL}" class="channel-logo-img" alt="" />` : ''}
+          ${ep.ChannelName || ''} ${ep.ChannelNumber || ''}
+        </span>
+      `;
+    }
 
     card.innerHTML = `
-      <div>
-        <h4 class="recording-title">${rec.Title || 'Untitled Recording'}</h4>
-        ${rec.EpisodeTitle ? `<p class="recording-episode">${rec.EpisodeTitle}</p>` : ''}
-        ${rec.EpisodeNumber ? `<p class="text-sm text-muted">Episode: ${rec.EpisodeNumber}</p>` : ''}
+      <div class="recording-top">
+        <img src="${posterUrl}" class="recording-poster" alt="${ep.Title || 'Show'}" loading="lazy" onerror="this.src='icon.svg'" />
+        <div class="recording-body">
+          <h4 class="recording-title">${ep.Title || 'Untitled Recording'}</h4>
+          ${ep.EpisodeTitle ? `<p class="recording-episode">${ep.EpisodeNumber ? ep.EpisodeNumber + ': ' : ''}${ep.EpisodeTitle}</p>` : ''}
+          ${ep.Synopsis ? `<p class="recording-synopsis" title="${ep.Synopsis}">${ep.Synopsis}</p>` : ''}
+        </div>
       </div>
 
       <div class="recording-meta">
         <span class="recording-meta-item">📅 ${recordedDate}</span>
         <span class="recording-meta-item">⏱️ ${durationMin}</span>
-        <span class="recording-meta-item">💾 ${fileSizeMb}</span>
-        ${rec.ChannelName ? `<span class="recording-meta-item">📺 ${rec.ChannelName}</span>` : ''}
+        ${channelDisplay}
+        ${ep.RecordSuccess === 1 ? '<span class="badge badge-hd">Complete</span>' : ''}
       </div>
 
       <div class="recording-actions">
-        ${
-          playUrl
-            ? `<a href="${playUrl}" target="_blank" class="btn btn-sm btn-primary">▶ Play Recording</a>`
-            : ''
-        }
+        ${playUrl ? `<a href="${playUrl}" target="_blank" class="btn btn-sm btn-primary">▶ Play Recording</a>` : ''}
+        ${playUrl ? `<button class="btn btn-sm btn-secondary btn-copy-url" data-url="${playUrl}">📋 Copy Link</button>` : ''}
+      </div>
+    `;
+
+    recordingsContainer.appendChild(card);
+  });
+
+  // Attach clipboard copy listeners
+  recordingsContainer.querySelectorAll('.btn-copy-url').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const url = btn.getAttribute('data-url');
+      await navigator.clipboard.writeText(url);
+      const originalText = btn.textContent;
+      btn.textContent = '✓ Copied';
+      setTimeout(() => (btn.textContent = originalText), 1500);
+    });
+  });
+}
+
+function renderSeries(seriesList) {
+  if (!seriesList || seriesList.length === 0) {
+    recordingsContainer.innerHTML = `
+      <div class="card empty-card" style="grid-column: 1 / -1;">
+        <div class="empty-icon">📂</div>
+        <h3>No Series Found</h3>
+        <p class="text-muted">No recorded series were found on the drive.</p>
+      </div>
+    `;
+    return;
+  }
+
+  recordingsContainer.innerHTML = '';
+  seriesList.forEach((s) => {
+    const card = document.createElement('div');
+    card.className = 'recording-card';
+    const posterUrl = s.ImageURL || 'icon.svg';
+    const recordedDate = s.StartTime ? new Date(s.StartTime * 1000).toLocaleDateString() : '—';
+
+    // Count matching episodes
+    const matchCount = state.episodes.filter((ep) => ep.SeriesID === s.SeriesID).length;
+
+    card.innerHTML = `
+      <div class="recording-top">
+        <img src="${posterUrl}" class="recording-poster" alt="${s.Title || 'Series'}" loading="lazy" onerror="this.src='icon.svg'" />
+        <div class="recording-body">
+          <h4 class="recording-title">${s.Title || 'Untitled Series'}</h4>
+          <p class="text-sm text-muted">Category: <strong style="text-transform: capitalize;">${s.Category || 'General'}</strong></p>
+          <div class="mt-6">
+            <span class="badge badge-hd">${matchCount > 0 ? `${matchCount} Episode${matchCount > 1 ? 's' : ''}` : 'Series'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="recording-meta">
+        <span class="recording-meta-item">📅 Latest: ${recordedDate}</span>
+      </div>
+
+      <div class="recording-actions">
+        <button class="btn btn-sm btn-secondary btn-view-series-episodes" data-series-id="${s.SeriesID}">
+          View Episodes (${matchCount})
+        </button>
+      </div>
+    `;
+
+    recordingsContainer.appendChild(card);
+  });
+
+  recordingsContainer.querySelectorAll('.btn-view-series-episodes').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const sId = btn.getAttribute('data-series-id');
+      const filtered = state.episodes.filter((ep) => ep.SeriesID === sId);
+      dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'episodes'));
+      state.dvrSubView = 'episodes';
+      renderEpisodes(filtered);
+    });
+  });
+}
+
+function renderRules(rulesList) {
+  if (!rulesList || rulesList.length === 0) {
+    recordingsContainer.innerHTML = `
+      <div class="card empty-card" style="grid-column: 1 / -1;">
+        <div class="empty-icon">📋</div>
+        <h3>No Scheduled Recording Rules</h3>
+        <p class="text-muted">No recording series or rules are currently configured.</p>
+      </div>
+    `;
+    return;
+  }
+
+  recordingsContainer.innerHTML = '';
+  rulesList.forEach((r) => {
+    const card = document.createElement('div');
+    card.className = 'rule-card';
+    const posterUrl = r.ImageURL || 'icon.svg';
+
+    let criteriaBadge = '';
+    if (r.TeamOnly) {
+      criteriaBadge = `<span class="badge badge-hd">🏈 Team: ${r.TeamOnly}</span>`;
+    } else if (r.ChannelOnly) {
+      criteriaBadge = `<span class="badge badge-hd">📺 Channel: ${r.ChannelOnly}</span>`;
+    }
+
+    card.innerHTML = `
+      <div class="recording-top">
+        <img src="${posterUrl}" class="recording-poster" alt="${r.Title || 'Rule'}" loading="lazy" onerror="this.src='icon.svg'" />
+        <div class="recording-body">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+            <h4 class="recording-title">${r.Title || 'Recording Rule'}</h4>
+            ${r.Priority ? `<span class="rule-priority-badge">Priority ${r.Priority}</span>` : ''}
+          </div>
+          ${criteriaBadge ? `<div class="mt-6">${criteriaBadge}</div>` : ''}
+          ${r.Synopsis ? `<p class="recording-synopsis" title="${r.Synopsis}">${r.Synopsis}</p>` : ''}
+        </div>
+      </div>
+
+      <div class="recording-meta">
+        ${r.StartPadding ? `<span>Padding: +${r.StartPadding}s start</span>` : ''}
+        ${r.EndPadding ? `<span>+${r.EndPadding}s end</span>` : ''}
       </div>
     `;
 
