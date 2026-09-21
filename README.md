@@ -27,7 +27,7 @@ Browse your entire channel lineup with ATSC 1.0 vs ATSC 3.0 detection, A3SA DRM 
 ---
 
 ### 📼 DVR & Recordings
-View connected storage (e.g., USB SSD) usage, browse recorded series and episodes with broadcast poster artwork and station logos, inspect scheduled recording rules, and download full `.mpg` video files directly.
+View connected storage usage, browse recorded series and episodes with broadcast poster artwork and station logos, inspect scheduled recording rules, and download full `.mpg` video files directly.
 
 ![DVR & Recordings](screenshots/recordings.png)
 
@@ -59,7 +59,7 @@ View device hardware details, check firmware update status against SiliconDust r
   * **Direct Streaming & M3U Export:** One-click clipboard URL copy (`📋 Copy URL`), M3U playlist launcher (`📺 M3U`) for external video players (VLC, IINA, etc.), and complete `#EXTM3U` playlist download for external IPTV players, Plex, Channels DVR, or Kodi.
 
 * **📼 DVR & Storage Engine:**
-  * Automatically detects attached storage (e.g., USB SSD on HDHomeRun FLEX 4K or network recording engines).
+  * Automatically detects attached storage (e.g., connected USB drive on HDHomeRun FLEX 4K or network recording engines).
   * Visual storage space bar (`Free GB` vs `Total GB` and % used).
   * **Series & Episodes Views:** Browse grouped series cards or drill down into individual episodes with season/episode numbers, original airdates, broadcast poster artwork, synopses, and station details.
   * **Direct Video Downloads:** Direct `⬇️ Download (.mpg)` button for every recorded file to save full raw video files directly to your device.
