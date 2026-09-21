@@ -1094,12 +1094,13 @@ function renderEpisodes(episodes) {
   }
 
   recordingsContainer.innerHTML = '';
-  episodes.forEach((ep) => {
+  episodes.forEach((ep, epIndex) => {
     const card = document.createElement('div');
     card.className = 'recording-card';
 
     const recordedDate = ep.StartTime ? new Date(ep.StartTime * 1000).toLocaleDateString() : '—';
-    const durationMin = ep.EndTime && ep.StartTime ? Math.round((ep.EndTime - ep.StartTime) / 60) + ' min' : (ep.Duration ? Math.round(ep.Duration / 60) + ' min' : '—');
+    const durationSec = (ep.EndTime && ep.StartTime) ? (ep.EndTime - ep.StartTime) : (ep.Duration || 0);
+    const durationMin = durationSec > 0 ? Math.round(durationSec / 60) + ' min' : (ep.Duration ? Math.round(ep.Duration / 60) + ' min' : '—');
     const playUrl = ep.PlayURL || ep.CmdURL;
     const posterUrl = ep.ImageURL || 'icon.svg';
 
@@ -1111,6 +1112,20 @@ function renderEpisodes(episodes) {
           ${ep.ChannelName || ''} ${ep.ChannelNumber || ''}
         </span>
       `;
+    }
+
+    // Determine initial file size display
+    let sizeDisplay = '';
+    const rawBytes = ep.FileSize || ep.FileSizeBytes || ep.Bytes || ep.Size || ep.RecordSize;
+    if (rawBytes) {
+      const gb = (rawBytes / (1024 * 1024 * 1024)).toFixed(2);
+      sizeDisplay = `💾 ${gb} GB`;
+    } else if (durationSec > 0) {
+      const isAtsc3 = (ep.ChannelNumber && String(ep.ChannelNumber).startsWith('10')) || (ep.ChannelName && ep.ChannelName.includes('4K'));
+      const estBitrate = isAtsc3 ? 6000000 : 12000000;
+      const estBytes = (durationSec * estBitrate) / 8;
+      const estGb = (estBytes / (1024 * 1024 * 1024)).toFixed(1);
+      sizeDisplay = `💾 ~${estGb} GB`;
     }
 
     const filenameParts = [ep.Title || 'Recording'];
@@ -1131,6 +1146,7 @@ function renderEpisodes(episodes) {
       <div class="recording-meta">
         <span class="recording-meta-item">📅 ${recordedDate}</span>
         <span class="recording-meta-item">⏱️ ${durationMin}</span>
+        ${sizeDisplay ? `<span class="recording-meta-item" id="ep-size-${epIndex}"><strong>${sizeDisplay}</strong></span>` : ''}
         ${channelDisplay}
         ${ep.RecordSuccess === 1 ? '<span class="badge badge-hd">Complete</span>' : ''}
       </div>
@@ -1156,6 +1172,24 @@ function renderEpisodes(episodes) {
     `;
 
     recordingsContainer.appendChild(card);
+
+    // Asynchronously query HEAD on playUrl to get exact Content-Length if available
+    if (!rawBytes && playUrl) {
+      fetch(playUrl, { method: 'HEAD' })
+        .then((res) => {
+          const cl = res.headers.get('content-length');
+          if (cl) {
+            const bytes = parseInt(cl, 10);
+            ep.FileSize = bytes;
+            const gb = (bytes / (1024 * 1024 * 1024)).toFixed(2);
+            const sizeEl = document.getElementById(`ep-size-${epIndex}`);
+            if (sizeEl) {
+              sizeEl.innerHTML = `<strong>💾 ${gb} GB</strong>`;
+            }
+          }
+        })
+        .catch(() => {});
+    }
   });
 
   // Attach clipboard copy listeners
@@ -1236,7 +1270,25 @@ function renderSeries(seriesList) {
     const recordedDate = s.StartTime ? new Date(s.StartTime * 1000).toLocaleDateString() : '—';
 
     // Count matching episodes
-    const matchCount = state.episodes.filter((ep) => ep.SeriesID === s.SeriesID).length;
+    const matchEpisodes = state.episodes.filter((ep) => ep.SeriesID === s.SeriesID);
+    const matchCount = matchEpisodes.length;
+
+    // Calculate total size for series
+    let seriesTotalGb = 0;
+    matchEpisodes.forEach((ep) => {
+      const b = ep.FileSize || ep.FileSizeBytes || ep.Bytes || ep.Size || ep.RecordSize;
+      if (b) {
+        seriesTotalGb += b / (1024 * 1024 * 1024);
+      } else {
+        const dSec = (ep.EndTime && ep.StartTime) ? (ep.EndTime - ep.StartTime) : (ep.Duration || 0);
+        if (dSec > 0) {
+          const isAtsc3 = (ep.ChannelNumber && String(ep.ChannelNumber).startsWith('10')) || (ep.ChannelName && ep.ChannelName.includes('4K'));
+          const estBitrate = isAtsc3 ? 6000000 : 12000000;
+          seriesTotalGb += (dSec * estBitrate) / 8 / (1024 * 1024 * 1024);
+        }
+      }
+    });
+    const sizeDisplay = seriesTotalGb > 0 ? `💾 ~${seriesTotalGb.toFixed(1)} GB` : '';
 
     card.innerHTML = `
       <div class="recording-top">
@@ -1252,6 +1304,7 @@ function renderSeries(seriesList) {
 
       <div class="recording-meta">
         <span class="recording-meta-item">📅 Latest: ${recordedDate}</span>
+        ${sizeDisplay ? `<span class="recording-meta-item"><strong>${sizeDisplay}</strong></span>` : ''}
       </div>
 
       <div class="recording-actions">

@@ -457,15 +457,30 @@ body {
 }
 
 .btn-delete {
-  background-color: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-main);
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 1 !important;
 }
 
 .btn-delete:hover {
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
-  border-color: rgba(239, 68, 68, 0.4);
+  background-color: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
+}
+
+[data-theme="light"] .btn-delete {
+  background-color: #fee2e2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+}
+
+[data-theme="light"] .btn-delete:hover {
+  background-color: #dc2626;
+  color: #ffffff;
+  border-color: #dc2626;
 }
 
 .badge {
