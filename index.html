@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HDHomeRun PWA Test</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1e293b" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-title">
+        <h1>HDHomeRun Monitor</h1>
+        <span class="badge" id="pwa-status">Web Mode</span>
+      </div>
+      <p class="subtitle">Test LAN connectivity from a PWA / HTTPS context</p>
+    </header>
+
+    <main>
+      <section class="card config-card">
+        <h2>Device Configuration</h2>
+        <div class="input-group">
+          <label for="hdhr-ip">Device IP Address</label>
+          <div class="ip-input-row">
+            <input type="text" id="hdhr-ip" placeholder="10.1.0.4" value="10.1.0.4" />
+            <button id="btn-save-ip" class="btn btn-secondary">Save</button>
+          </div>
+        </div>
+
+        <div class="button-row">
+          <button id="btn-status" class="btn btn-primary">Fetch /status.json</button>
+          <button id="btn-discover" class="btn btn-secondary">Fetch /discover.json</button>
+          <button id="btn-lineup" class="btn btn-secondary">Fetch /lineup.json</button>
+        </div>
+      </section>
+
+      <section class="card status-card">
+        <div class="status-header">
+          <h2>Response & Diagnostics</h2>
+          <span id="timing-badge" class="timing-badge hidden">0 ms</span>
+        </div>
+
+        <div id="diagnostic-banner" class="diagnostic-banner hidden"></div>
+
+        <pre id="output-json">Click a button above to test loading data from the HDHomeRun...</pre>
+      </section>
+
+      <section class="card help-card">
+        <h2>Troubleshooting & Browser Permissions</h2>
+        <div class="help-content">
+          <div class="help-item">
+            <strong>1. Mixed Content (HTTPS $\to$ HTTP)</strong>
+            <p>If hosted on GitHub Pages, Chrome blocks HTTP requests. Fix: Click the <em>Tune/Sliders</em> icon next to the URL $\to$ <strong>Site settings</strong> $\to$ set <strong>Insecure content</strong> to <strong>Allow</strong>.</p>
+          </div>
+          <div class="help-item">
+            <strong>2. Private Network Access (PNA)</strong>
+            <p>If Chrome blocks public $\to$ private IP access, allow this origin via Terminal:</p>
+            <pre class="code-snippet">defaults write com.google.Chrome InsecurePrivateNetworkRequestsAllowedForUrls -array "https://&lt;your-username&gt;.github.io"</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <button id="btn-install" class="btn btn-install hidden">➕ Install PWA</button>
+      <p class="footer-note">Origin: <code id="current-origin"></code></p>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

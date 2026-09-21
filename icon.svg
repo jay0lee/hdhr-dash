@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="100" fill="#1e293b"/>
+  <!-- TV Monitor Body -->
+  <rect x="76" y="96" width="360" height="250" rx="24" fill="#0f172a" stroke="#38bdf8" stroke-width="16"/>
+  <!-- Screen Glow / Wave -->
+  <path d="M 120 220 Q 180 150 240 220 T 360 220" fill="none" stroke="#38bdf8" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="392" cy="136" r="10" fill="#4ade80"/>
+  <!-- TV Stand -->
+  <path d="M 216 350 L 200 410 L 312 410 L 296 350 Z" fill="#38bdf8"/>
+  <rect x="160" y="410" width="192" height="16" rx="8" fill="#38bdf8"/>
+</svg>
