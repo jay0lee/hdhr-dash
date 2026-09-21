@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.20" />
+  <link rel="stylesheet" href="style.css?v=2.0.21" />
 </head>
 <body>
   <div class="app-shell">
@@ -234,7 +234,10 @@
         <div class="system-grid">
           <!-- Device Information Card -->
           <div class="card">
-            <h3>Device Details</h3>
+            <div class="card-header-with-actions">
+              <h3>Device Details</h3>
+              <button id="btn-refresh-system-status" class="btn btn-xs btn-secondary" title="Refresh device and live status">🔄 Refresh</button>
+            </div>
             <div id="device-info-list" class="info-list">
               <div class="info-row"><span class="info-label">Model</span><span id="info-model" class="info-val">—</span></div>
               <div class="info-row"><span class="info-label">Device ID</span><span id="info-id" class="info-val font-mono">—</span></div>
@@ -248,7 +251,27 @@
               </div>
               <div class="info-row"><span class="info-label">Tuners</span><span id="info-tuners" class="info-val">—</span></div>
               <div class="info-row"><span class="info-label">IP Address</span><span id="info-ip" class="info-val font-mono">—</span></div>
-              <div class="info-row"><span class="info-label">Storage URL</span><span id="info-storage" class="info-val font-mono">—</span></div>
+              <div class="info-row">
+                <span class="info-label">Active Clients</span>
+                <div id="info-clients-wrap" class="info-val-group">
+                  <span id="info-active-clients" class="info-val">—</span>
+                </div>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Active Recordings</span>
+                <div id="info-recordings-wrap" class="info-val-group">
+                  <span id="info-active-recordings" class="info-val">—</span>
+                </div>
+              </div>
+              <div class="info-row">
+                <span class="info-label">Storage</span>
+                <div id="info-storage-container" class="info-val-group" style="flex-direction: column; align-items: flex-end; gap: 4px;">
+                  <span id="info-storage" class="info-val">—</span>
+                  <div id="info-storage-bar-wrap" class="storage-mini-bar-wrap hidden">
+                    <div id="info-storage-bar-fill" style="height: 100%; width: 0%; border-radius: 3px; transition: width 0.3s ease;"></div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="card-footer-actions">
               <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4'), '_blank')">
@@ -354,6 +377,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.20"></script>
+  <script src="app.js?v=2.0.21"></script>
 </body>
 </html>

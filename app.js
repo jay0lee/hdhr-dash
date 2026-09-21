@@ -89,7 +89,12 @@ const infoId = document.getElementById('info-id');
 const infoFirmware = document.getElementById('info-firmware');
 const infoTuners = document.getElementById('info-tuners');
 const infoIp = document.getElementById('info-ip');
+const infoActiveClients = document.getElementById('info-active-clients');
+const infoActiveRecordings = document.getElementById('info-active-recordings');
 const infoStorage = document.getElementById('info-storage');
+const infoStorageBarWrap = document.getElementById('info-storage-bar-wrap');
+const infoStorageBarFill = document.getElementById('info-storage-bar-fill');
+const btnRefreshSystemStatus = document.getElementById('btn-refresh-system-status');
 const discoveredDevicesList = document.getElementById('discovered-devices-list');
 const inputCustomIp = document.getElementById('input-custom-ip');
 const btnAddDevice = document.getElementById('btn-add-device');
@@ -333,7 +338,6 @@ async function loadDeviceDetails() {
     infoFirmware.textContent = data.FirmwareVersion || data.FirmwareName || '—';
     infoTuners.textContent = data.TunerCount ? `${data.TunerCount} Tuners` : '—';
     infoIp.textContent = ip;
-    infoStorage.textContent = data.StorageURL || data.StorageID || 'None advertised';
 
     // Check for DVR / Storage engine in discover.json
     if (data.StorageURL) {
@@ -351,6 +355,9 @@ async function loadDeviceDetails() {
       DeviceID: data.DeviceID,
       StorageURL: data.StorageURL,
     });
+
+    // Update live HDHR status: active clients, active recordings, and storage (used/free)
+    await updateSystemLiveStatus();
 
     // Check for firmware updates
     checkFirmwareUpdate(data);
@@ -382,6 +389,173 @@ async function checkFirmwareUpdate(deviceData) {
     badge.className = 'badge badge-up-to-date';
     badge.textContent = '✓ Up to date';
     badge.title = `Firmware ${currentVersion || ''} is up to date`;
+  }
+}
+
+async function updateSystemLiveStatus() {
+  const ip = state.currentIp;
+  try {
+    // 1. Fetch status.json for live tuner and session info
+    let statusItems = [];
+    try {
+      const statusRes = await fetch(`http://${ip}/status.json`);
+      if (statusRes.ok) {
+        statusItems = await statusRes.json();
+        if (Array.isArray(statusItems)) {
+          state.tuners = statusItems;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch /status.json for system status:', e);
+    }
+
+    // 2. Parse active clients and active recordings
+    const physicalTuners = statusItems.filter((item) =>
+      item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+    );
+    const liveSessions = statusItems.filter((item) =>
+      !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
+    );
+
+    const activeClients = [];
+    const activeRecordings = [];
+
+    // Check physical tuners
+    physicalTuners.forEach((tuner) => {
+      const targetIp = tuner.TargetIP;
+      const isLocalOrRecord =
+        !targetIp ||
+        targetIp === 'none' ||
+        targetIp === '127.0.0.1' ||
+        targetIp === '::1' ||
+        targetIp === '[::1]' ||
+        targetIp === ip;
+
+      const hasChannel = Boolean(tuner.VctNumber || tuner.VctName);
+
+      if (hasChannel) {
+        const chLabel = tuner.VctNumber
+          ? `Ch ${tuner.VctNumber}${tuner.VctName ? ' ' + tuner.VctName : ''}`
+          : (tuner.VctName || tuner.Resource);
+
+        if (isLocalOrRecord && (targetIp === ip || targetIp === '127.0.0.1' || targetIp === '[::1]' || targetIp === '::1')) {
+          activeRecordings.push({
+            channel: chLabel,
+            target: targetIp,
+          });
+        } else if (!isLocalOrRecord) {
+          activeClients.push({
+            ip: targetIp,
+            channel: chLabel,
+          });
+        }
+      }
+    });
+
+    // Check liveSessions (sessions from HTTP streaming or DVR record engines)
+    liveSessions.forEach((s) => {
+      const isRecord =
+        (s.Resource && s.Resource.toLowerCase().includes('record')) ||
+        (s.Name && s.Name.toLowerCase().includes('record'));
+
+      if (isRecord) {
+        const name = s.Name ? `Ch ${s.Name}` : 'DVR Recording';
+        if (!activeRecordings.some((r) => r.channel === name)) {
+          activeRecordings.push({
+            channel: name,
+            target: s.TargetIP || 'Local',
+          });
+        }
+      } else if (
+        s.TargetIP &&
+        s.TargetIP !== 'none' &&
+        s.TargetIP !== ip &&
+        s.TargetIP !== '127.0.0.1' &&
+        s.TargetIP !== '::1' &&
+        s.TargetIP !== '[::1]'
+      ) {
+        if (!activeClients.some((c) => c.ip === s.TargetIP)) {
+          activeClients.push({
+            ip: s.TargetIP,
+            channel: s.Name ? `Ch ${s.Name}` : '',
+          });
+        }
+      }
+    });
+
+    // 3. Render Active Clients
+    if (infoActiveClients) {
+      if (activeClients.length === 0) {
+        infoActiveClients.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
+      } else if (activeClients.length === 1) {
+        const c = activeClients[0];
+        infoActiveClients.innerHTML = `
+          <span class="badge badge-active-client">1 Streaming</span>
+          <span class="font-mono text-sm">${c.ip}${c.channel ? ` (${c.channel})` : ''}</span>
+        `;
+      } else {
+        const ipList = activeClients.map((c) => `${c.ip}${c.channel ? ` (${c.channel})` : ''}`).join(', ');
+        infoActiveClients.innerHTML = `
+          <span class="badge badge-active-client">${activeClients.length} Streaming</span>
+          <span class="font-mono text-sm text-muted" title="${ipList}">${activeClients.map((c) => c.ip).join(', ')}</span>
+        `;
+      }
+    }
+
+    // 4. Render Active Recordings
+    if (infoActiveRecordings) {
+      if (activeRecordings.length === 0) {
+        infoActiveRecordings.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
+      } else {
+        const recList = activeRecordings.map((r) => r.channel).join(', ');
+        infoActiveRecordings.innerHTML = `
+          <span class="badge badge-active-record">🔴 ${activeRecordings.length} Active</span>
+          <span class="text-sm font-semibold">${recList}</span>
+        `;
+      }
+    }
+
+    // 5. Render Storage (Used / Free)
+    if (infoStorage) {
+      // Check if state.deviceInfo has space info, or if port 4999 has it
+      if (!state.deviceInfo?.TotalSpace) {
+        try {
+          const dvrRes = await fetch(`http://${ip}:4999/discover.json`);
+          if (dvrRes.ok) {
+            const dvrData = await dvrRes.json();
+            if (dvrData.TotalSpace) {
+              state.deviceInfo = { ...state.deviceInfo, ...dvrData };
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (state.deviceInfo?.TotalSpace && state.deviceInfo?.FreeSpace) {
+        const totalGb = (state.deviceInfo.TotalSpace / (1024 * 1024 * 1024)).toFixed(1);
+        const freeGb = (state.deviceInfo.FreeSpace / (1024 * 1024 * 1024)).toFixed(1);
+        const usedBytes = state.deviceInfo.TotalSpace - state.deviceInfo.FreeSpace;
+        const usedGb = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
+        const usedPercent = Math.round((usedBytes / state.deviceInfo.TotalSpace) * 100);
+
+        infoStorage.innerHTML = `<span><strong>${freeGb} GB free</strong> of ${totalGb} GB (${usedPercent}% used)</span>`;
+        if (infoStorageBarWrap && infoStorageBarFill) {
+          infoStorageBarWrap.classList.remove('hidden');
+          infoStorageBarFill.style.width = `${usedPercent}%`;
+          if (usedPercent > 90) {
+            infoStorageBarFill.style.backgroundColor = '#ef4444';
+          } else if (usedPercent > 75) {
+            infoStorageBarFill.style.backgroundColor = '#f59e0b';
+          } else {
+            infoStorageBarFill.style.backgroundColor = '#10b981';
+          }
+        }
+      } else {
+        infoStorage.innerHTML = '<span class="text-muted" style="font-weight: normal;">None detected</span>';
+        if (infoStorageBarWrap) infoStorageBarWrap.classList.add('hidden');
+      }
+    }
+  } catch (err) {
+    console.warn('Error updating system live status:', err);
   }
 }
 
@@ -436,6 +610,16 @@ function setupDeviceManagement() {
     btnRediscover.textContent = '🔍 Run Cloud Discovery (api.hdhomerun.com)';
     btnRediscover.disabled = false;
   });
+
+  if (btnRefreshSystemStatus) {
+    btnRefreshSystemStatus.addEventListener('click', async () => {
+      btnRefreshSystemStatus.disabled = true;
+      btnRefreshSystemStatus.textContent = 'Refreshing...';
+      await loadDeviceDetails();
+      btnRefreshSystemStatus.textContent = '🔄 Refresh';
+      btnRefreshSystemStatus.disabled = false;
+    });
+  }
 
   renderDiscoveredList();
 }
@@ -700,9 +884,13 @@ function startPolling() {
   if (!state.isPolling || state.pollInterval <= 0) return;
 
   state.pollTimer = setInterval(() => {
-    // Only poll tuners actively if the tab is visible and on tuners tab
-    if (document.visibilityState === 'visible' && state.activeTab === 'tuners') {
-      fetchTuners();
+    // Only poll actively if the tab is visible
+    if (document.visibilityState === 'visible') {
+      if (state.activeTab === 'tuners') {
+        fetchTuners();
+      } else if (state.activeTab === 'system') {
+        updateSystemLiveStatus();
+      }
     }
   }, state.pollInterval);
 }

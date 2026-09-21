@@ -1420,3 +1420,37 @@ body {
   border-radius: var(--radius-md);
   margin-bottom: 16px;
 }
+
+/* Card Header with Action Button */
+.card-header-with-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.card-header-with-actions h3 {
+  margin-bottom: 0;
+}
+
+/* Live System Status Badges & Storage Mini Bar */
+.badge-active-client {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald-light);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-weight: 600;
+}
+
+.badge-active-record {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  font-weight: 600;
+}
+
+.storage-mini-bar-wrap {
+  width: 140px;
+  height: 6px;
+  background-color: var(--bg-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
