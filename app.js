@@ -667,6 +667,20 @@ function setupDeviceManagement() {
     });
   }
 
+  const btnSystemLog = document.getElementById('btn-system-log');
+  if (btnSystemLog) {
+    btnSystemLog.addEventListener('click', () => {
+      window.open(`http://${state.currentIp || DEFAULT_IP}/log.html`, '_blank');
+    });
+  }
+
+  const btnRebootCheck = document.getElementById('btn-reboot-check');
+  if (btnRebootCheck) {
+    btnRebootCheck.addEventListener('click', () => {
+      window.open(`http://${state.currentIp || DEFAULT_IP}`, '_blank');
+    });
+  }
+
   // Handle in-app navigation links from Device Details
   const deviceInfoList = document.getElementById('device-info-list');
   if (deviceInfoList) {

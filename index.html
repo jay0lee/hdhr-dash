@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.24" />
+  <link rel="stylesheet" href="style.css?v=2.0.25" />
 </head>
 <body>
   <div class="app-shell">
@@ -290,6 +290,9 @@
               <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4'), '_blank')">
                 Open Device Web Admin ↗
               </button>
+              <button id="btn-system-log" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4') + '/log.html', '_blank')">
+                System Log ↗
+              </button>
               <a href="https://www.silicondust.com/support/downloads/firmware-changelog/" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">
                 Firmware Changelog ↗
               </a>
@@ -390,6 +393,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.24"></script>
+  <script src="app.js?v=2.0.25"></script>
 </body>
 </html>
