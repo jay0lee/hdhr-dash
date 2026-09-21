@@ -114,9 +114,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Start polling
   startPolling();
 
-  // Background Cloud Discovery
-  discoverCloudDevices();
-
   // Setup Firmware Check button
   const btnCheckFirmware = document.getElementById('btn-check-firmware');
   if (btnCheckFirmware) {
@@ -317,28 +314,10 @@ async function checkFirmwareUpdate(deviceData) {
   badge.textContent = 'Checking...';
 
   const currentVersion = deviceData?.FirmwareVersion || state.deviceInfo?.FirmwareVersion;
-  const ip = state.currentIp;
 
-  // 1. Check local discover.json for UpgradeURL or UpgradeAvailable
-  let upgradeAvailable = !!(deviceData?.UpgradeURL || deviceData?.UpgradeAvailable);
-  let upgradeVersion = deviceData?.UpgradeAvailable || '';
-
-  // 2. Query cloud discovery to see if cloud service reports an update for this device
-  if (!upgradeAvailable) {
-    try {
-      const res = await fetch('https://ipv4-api.hdhomerun.com/discover');
-      if (res.ok) {
-        const list = await res.json();
-        const match = Array.isArray(list) && list.find((d) => d.DeviceID === deviceData?.DeviceID || d.LocalIP === ip);
-        if (match?.UpgradeURL || match?.UpgradeAvailable) {
-          upgradeAvailable = true;
-          upgradeVersion = match.UpgradeAvailable || '';
-        }
-      }
-    } catch (e) {
-      console.log('Cloud firmware check error:', e);
-    }
-  }
+  // Check local discover.json for UpgradeURL or UpgradeAvailable
+  const upgradeAvailable = !!(deviceData?.UpgradeURL || deviceData?.UpgradeAvailable);
+  const upgradeVersion = deviceData?.UpgradeAvailable || '';
 
   if (upgradeAvailable) {
     badge.className = 'badge badge-update-available';
@@ -494,6 +473,7 @@ function renderTuners(statusItems) {
     const statusClass = isActive ? 'streaming' : 'idle';
 
     let detailsHtml = '';
+    let sharedBadge = '';
 
     if (isActive) {
       const strength = tuner.SignalStrengthPercent ?? 0;
@@ -551,7 +531,6 @@ function renderTuners(statusItems) {
         rateDisplay = `<span>Freq: ${(tuner.Frequency / 1000000).toFixed(3)} MHz</span>`;
       }
 
-      let sharedBadge = '';
       if (clientSessions.length > 1) {
         sharedBadge = `<span class="badge badge-hd" title="Tuner Sharing active: ${clientSessions.length} clients sharing this tuner">Shared (${clientSessions.length})</span>`;
       }
