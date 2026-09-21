@@ -6,7 +6,13 @@
   <title>HDHomeRun Dashboard</title>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#0f172a" />
-  <link rel="stylesheet" href="style.css" />
+  <!-- Critical styles to prevent layout flash or version mismatch -->
+  <style>
+    .tab-view { display: none !important; }
+    .tab-view.active { display: block !important; }
+    .hidden { display: none !important; }
+  </style>
+  <link rel="stylesheet" href="style.css?v=2.0.1" />
 </head>
 <body>
   <div class="app-shell">
@@ -179,7 +185,7 @@
               <div class="info-row"><span class="info-label">Storage URL</span><span id="info-storage" class="info-val font-mono">—</span></div>
             </div>
             <div class="card-footer-actions">
-              <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + currentIp, '_blank')">
+              <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4'), '_blank')">
                 Open Device Web Admin ↗
               </button>
             </div>
@@ -213,6 +219,6 @@
     </main>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2.0.1"></script>
 </body>
 </html>

@@ -1,20 +1,20 @@
-const CACHE_NAME = 'hdhr-dash-v2';
+const CACHE_NAME = 'hdhr-dash-v4';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css',
-  './app.js',
+  './style.css?v=2.0.1',
+  './app.js?v=2.0.1',
   './manifest.json',
   './icon.svg'
 ];
 
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(STATIC_ASSETS);
     })
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -23,19 +23,19 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
+            console.log('Purging old cache:', key);
             return caches.delete(key);
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Never intercept HDHomeRun LAN API calls or SiliconDust cloud discovery
+  // Never intercept HDHomeRun LAN API calls, external APIs, or non-origin requests
   if (
     !url.protocol.startsWith('http') ||
     url.hostname !== self.location.hostname ||
