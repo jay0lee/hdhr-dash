@@ -3,70 +3,214 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>HDHomeRun PWA Test</title>
+  <title>HDHomeRun Dashboard</title>
   <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#1e293b" />
+  <meta name="theme-color" content="#0f172a" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="header-title">
-        <h1>HDHomeRun Monitor</h1>
-        <span class="badge" id="pwa-status">Web Mode</span>
+  <div class="app-shell">
+    <!-- Top Navigation Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-group">
+          <svg class="app-logo" viewBox="0 0 512 512" width="32" height="32">
+            <rect width="512" height="512" rx="100" fill="#1e293b"/>
+            <rect x="76" y="96" width="360" height="250" rx="24" fill="#0f172a" stroke="#38bdf8" stroke-width="16"/>
+            <path d="M 120 220 Q 180 150 240 220 T 360 220" fill="none" stroke="#38bdf8" stroke-width="12" stroke-linecap="round"/>
+            <circle cx="392" cy="136" r="10" fill="#4ade80"/>
+            <path d="M 216 350 L 200 410 L 312 410 L 296 350 Z" fill="#38bdf8"/>
+            <rect x="160" y="410" width="192" height="16" rx="8" fill="#38bdf8"/>
+          </svg>
+          <span class="app-title">HDHR Dash</span>
+        </div>
+
+        <div class="device-selector-wrapper">
+          <select id="device-select" title="Active Device">
+            <option value="10.1.0.4">HDHomeRun (10.1.0.4)</option>
+          </select>
+          <span id="connection-status-dot" class="status-dot connected" title="Connected"></span>
+        </div>
       </div>
-      <p class="subtitle">Test LAN connectivity from a PWA / HTTPS context</p>
+
+      <div class="header-right">
+        <div class="poll-control">
+          <button id="btn-toggle-poll" class="btn btn-icon" title="Pause / Resume Live Polling">
+            <span class="live-dot pulse"></span>
+            <span id="poll-btn-label">Live</span>
+          </button>
+          <select id="poll-interval-select" title="Polling Interval">
+            <option value="1000">1s</option>
+            <option value="2500" selected>2.5s</option>
+            <option value="5000">5s</option>
+            <option value="0">Off</option>
+          </select>
+        </div>
+
+        <button id="btn-install" class="btn btn-sm btn-install hidden" title="Install as Web App">
+          ➕ Install
+        </button>
+      </div>
     </header>
 
-    <main>
-      <section class="card config-card">
-        <h2>Device Configuration</h2>
-        <div class="input-group">
-          <label for="hdhr-ip">Device IP Address</label>
-          <div class="ip-input-row">
-            <input type="text" id="hdhr-ip" placeholder="10.1.0.4" value="10.1.0.4" />
-            <button id="btn-save-ip" class="btn btn-secondary">Save</button>
+    <!-- Nav Tabs -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="tuners">
+        <span class="tab-icon">📡</span>
+        <span class="tab-label">Tuners</span>
+      </button>
+      <button class="nav-tab" data-tab="lineup">
+        <span class="tab-icon">📺</span>
+        <span class="tab-label">Lineup</span>
+        <span id="lineup-count-badge" class="tab-badge hidden">0</span>
+      </button>
+      <button class="nav-tab" data-tab="recordings" id="tab-btn-recordings">
+        <span class="tab-icon">📼</span>
+        <span class="tab-label">Recordings</span>
+        <span id="recordings-count-badge" class="tab-badge hidden">0</span>
+      </button>
+      <button class="nav-tab" data-tab="system">
+        <span class="tab-icon">⚙️</span>
+        <span class="tab-label">System</span>
+      </button>
+    </nav>
+
+    <!-- Main Views Container -->
+    <main class="main-content">
+      <!-- Error / Alert Banner -->
+      <div id="global-alert" class="alert-banner hidden"></div>
+
+      <!-- Tab 1: Tuners View -->
+      <section id="view-tuners" class="tab-view active">
+        <div class="view-header">
+          <h2>Tuner Activity & Status</h2>
+          <div class="view-actions">
+            <span id="tuner-summary-badge" class="badge">Checking...</span>
+            <button id="btn-refresh-tuners" class="btn btn-sm btn-secondary">↻ Refresh</button>
           </div>
         </div>
 
-        <div class="button-row">
-          <button id="btn-status" class="btn btn-primary">Fetch /status.json</button>
-          <button id="btn-discover" class="btn btn-secondary">Fetch /discover.json</button>
-          <button id="btn-lineup" class="btn btn-secondary">Fetch /lineup.json</button>
+        <div id="tuners-grid" class="tuners-grid">
+          <!-- Dynamically populated tuner cards -->
+          <div class="loading-placeholder">Loading tuner status...</div>
         </div>
       </section>
 
-      <section class="card status-card">
-        <div class="status-header">
-          <h2>Response & Diagnostics</h2>
-          <span id="timing-badge" class="timing-badge hidden">0 ms</span>
-        </div>
-
-        <div id="diagnostic-banner" class="diagnostic-banner hidden"></div>
-
-        <pre id="output-json">Click a button above to test loading data from the HDHomeRun...</pre>
-      </section>
-
-      <section class="card help-card">
-        <h2>Troubleshooting & Browser Permissions</h2>
-        <div class="help-content">
-          <div class="help-item">
-            <strong>1. Mixed Content (HTTPS $\to$ HTTP)</strong>
-            <p>If hosted on GitHub Pages, Chrome blocks HTTP requests. Fix: Click the <em>Tune/Sliders</em> icon next to the URL $\to$ <strong>Site settings</strong> $\to$ set <strong>Insecure content</strong> to <strong>Allow</strong>.</p>
+      <!-- Tab 2: Channel Lineup View -->
+      <section id="view-lineup" class="tab-view">
+        <div class="view-header">
+          <h2>Channel Lineup</h2>
+          <div class="view-actions">
+            <button id="btn-export-m3u" class="btn btn-sm btn-secondary" title="Download M3U Playlist">
+              📥 Export M3U
+            </button>
+            <button id="btn-refresh-lineup" class="btn btn-sm btn-secondary">↻ Refresh</button>
           </div>
-          <div class="help-item">
-            <strong>2. Private Network Access (PNA)</strong>
-            <p>If Chrome blocks public $\to$ private IP access, allow this origin via Terminal:</p>
-            <pre class="code-snippet">defaults write com.google.Chrome InsecurePrivateNetworkRequestsAllowedForUrls -array "https://&lt;your-username&gt;.github.io"</pre>
+        </div>
+
+        <div class="filter-bar">
+          <input type="text" id="lineup-search" placeholder="Search channels by name or number (e.g. 5.1, NBC)..." />
+          <div class="filter-pills">
+            <button class="pill active" data-filter="all">All</button>
+            <button class="pill" data-filter="hd">HD Only</button>
+            <button class="pill" data-filter="favorites">Favorites</button>
+          </div>
+        </div>
+
+        <div id="lineup-container" class="lineup-table-wrapper">
+          <table class="lineup-table">
+            <thead>
+              <tr>
+                <th>Channel</th>
+                <th>Station</th>
+                <th>Type</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="lineup-tbody">
+              <tr>
+                <td colspan="4" class="empty-state">Loading channel lineup...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Tab 3: DVR Recordings View -->
+      <section id="view-recordings" class="tab-view">
+        <div class="view-header">
+          <div>
+            <h2>DVR Recordings</h2>
+            <p id="dvr-engine-info" class="text-muted text-sm">Detecting recording engine...</p>
+          </div>
+          <div class="view-actions">
+            <button id="btn-refresh-recordings" class="btn btn-sm btn-secondary">↻ Refresh</button>
+          </div>
+        </div>
+
+        <div id="dvr-not-detected" class="card empty-card hidden">
+          <div class="empty-icon">📼</div>
+          <h3>No Recording Engine Detected</h3>
+          <p>The active device does not currently advertise an HDHomeRun RECORD storage engine. If your storage engine runs on a different IP or port, you can configure it in System settings.</p>
+          <button id="btn-recheck-dvr" class="btn btn-primary">Check Again</button>
+        </div>
+
+        <div id="recordings-container" class="recordings-grid">
+          <!-- Dynamically populated recording cards -->
+        </div>
+      </section>
+
+      <!-- Tab 4: System & Settings View -->
+      <section id="view-system" class="tab-view">
+        <div class="view-header">
+          <h2>System & Settings</h2>
+        </div>
+
+        <div class="system-grid">
+          <!-- Device Information Card -->
+          <div class="card">
+            <h3>Device Details</h3>
+            <div id="device-info-list" class="info-list">
+              <div class="info-row"><span class="info-label">Model</span><span id="info-model" class="info-val">—</span></div>
+              <div class="info-row"><span class="info-label">Device ID</span><span id="info-id" class="info-val font-mono">—</span></div>
+              <div class="info-row"><span class="info-label">Firmware</span><span id="info-firmware" class="info-val">—</span></div>
+              <div class="info-row"><span class="info-label">Tuners</span><span id="info-tuners" class="info-val">—</span></div>
+              <div class="info-row"><span class="info-label">IP Address</span><span id="info-ip" class="info-val font-mono">—</span></div>
+              <div class="info-row"><span class="info-label">Storage URL</span><span id="info-storage" class="info-val font-mono">—</span></div>
+            </div>
+            <div class="card-footer-actions">
+              <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + currentIp, '_blank')">
+                Open Device Web Admin ↗
+              </button>
+            </div>
+          </div>
+
+          <!-- Add / Manage Devices Card -->
+          <div class="card">
+            <h3>Manage Devices</h3>
+            <p class="text-sm text-muted mb-12">Discovered via SiliconDust Cloud API or manually added.</p>
+
+            <div id="discovered-devices-list" class="device-cards-list">
+              <!-- Dynamically populated -->
+            </div>
+
+            <div class="manual-add-section">
+              <label for="input-custom-ip" class="text-sm font-semibold">Add Device IP Manually</label>
+              <div class="ip-input-row mt-6">
+                <input type="text" id="input-custom-ip" placeholder="10.1.0.4 or 192.168.1.100" />
+                <button id="btn-add-device" class="btn btn-primary">Add / Switch</button>
+              </div>
+            </div>
+
+            <div class="mt-16">
+              <button id="btn-rediscover" class="btn btn-sm btn-secondary">
+                🔍 Run Cloud Discovery (api.hdhomerun.com)
+              </button>
+            </div>
           </div>
         </div>
       </section>
     </main>
-
-    <footer>
-      <button id="btn-install" class="btn btn-install hidden">➕ Install PWA</button>
-      <p class="footer-note">Origin: <code id="current-origin"></code></p>
-    </footer>
   </div>
 
   <script src="app.js"></script>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hdhr-dash-v1';
+const CACHE_NAME = 'hdhr-dash-v2';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -35,23 +35,27 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Do not intercept or cache calls to the HDHomeRun or non-http(s)
-  if (!url.protocol.startsWith('http') || url.hostname !== self.location.hostname) {
+  // Never intercept HDHomeRun LAN API calls or SiliconDust cloud discovery
+  if (
+    !url.protocol.startsWith('http') ||
+    url.hostname !== self.location.hostname ||
+    url.pathname.endsWith('.json')
+  ) {
     return;
   }
 
-  // Network-first strategy for static assets
+  // Network-first strategy for app shell assets
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
+        if (response && response.status === 200) {
+          const responseClone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseClone);
+          });
+        }
         return response;
       })
-      .catch(() => {
-        return caches.match(event.request);
-      })
+      .catch(() => caches.match(event.request))
   );
 });
