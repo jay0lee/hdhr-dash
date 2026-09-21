@@ -731,6 +731,9 @@ function renderDiscoveredList() {
 async function fetchTuners() {
   const ip = state.currentIp;
   try {
+    if (state.hasDvr && state.episodes.length === 0) {
+      fetchRecordings(true);
+    }
     const res = await fetch(`http://${ip}/status.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const tuners = await res.json();
@@ -770,11 +773,11 @@ function renderTuners(statusItems) {
     card.className = `tuner-card ${isActive ? 'active' : ''}`;
 
     const tunerName = tuner.Resource || `tuner${index}`;
-    const statusText = isActive ? 'Streaming' : 'Idle';
-    const statusClass = isActive ? 'streaming' : 'idle';
 
     let detailsHtml = '';
     let sharedBadge = '';
+    let isRecording = false;
+    let hasExternalClient = false;
 
     if (isActive) {
       const strength = tuner.SignalStrengthPercent ?? 0;
@@ -806,6 +809,18 @@ function renderTuners(statusItems) {
           });
         }
       });
+
+      hasExternalClient = clientSessions.some((c) => c.type === 'client' && c.ip !== 'Local');
+
+      // Check if tuner is recording:
+      const nowSec = Math.floor(Date.now() / 1000);
+      const hasRecordSession = clientSessions.some((c) => c.type === 'record');
+      const hasEpisodeRecording = (state.episodes || []).some((ep) => {
+        return ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1 &&
+               (ep.ChannelNumber === tuner.VctNumber || (tuner.VctNumber && String(ep.ChannelNumber).includes(String(tuner.VctNumber))) || (ep.ChannelName && tuner.VctName && ep.ChannelName.toLowerCase() === tuner.VctName.toLowerCase()));
+      });
+      const isLocalOnly = !hasExternalClient && (clientSessions.length === 0 || clientSessions.every(c => c.ip === 'Local'));
+      isRecording = hasRecordSession || hasEpisodeRecording || (isLocalOnly && state.hasDvr);
 
       let clientsDisplay = '';
       if (clientSessions.length === 0) {
@@ -862,10 +877,31 @@ function renderTuners(statusItems) {
       `;
     }
 
+    // Determine status badge and indicator dot
+    let statusText = 'Idle';
+    let statusClass = 'idle';
+    let dotClass = '';
+
+    if (isActive) {
+      if (isRecording && hasExternalClient) {
+        statusText = 'Streaming & Recording';
+        statusClass = 'recording-streaming';
+        dotClass = 'recording';
+      } else if (isRecording) {
+        statusText = 'Recording';
+        statusClass = 'recording';
+        dotClass = 'recording';
+      } else {
+        statusText = 'Streaming';
+        statusClass = 'streaming';
+        dotClass = 'connected';
+      }
+    }
+
     card.innerHTML = `
       <div class="tuner-card-header">
         <span class="tuner-name">
-          <span class="status-dot ${isActive ? 'connected' : ''}"></span>
+          <span class="status-dot ${dotClass}"></span>
           ${tunerName.toUpperCase()}
           ${sharedBadge || ''}
         </span>

@@ -215,6 +215,11 @@ body {
   box-shadow: 0 0 8px rgba(244, 63, 94, 0.6);
 }
 
+.status-dot.recording {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -560,6 +565,18 @@ body {
 .tuner-status-badge.streaming {
   background-color: rgba(56, 189, 248, 0.2);
   color: var(--accent-cyan);
+}
+
+.tuner-status-badge.recording {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.tuner-status-badge.recording-streaming {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: var(--accent-amber);
+  border: 1px solid rgba(245, 158, 11, 0.35);
 }
 
 .tuner-active-info {
