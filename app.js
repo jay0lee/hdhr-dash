@@ -34,6 +34,16 @@ const state = {
   pollTimer: null,
   filterText: '',
   filterType: 'allowed', // 'allowed', 'all', 'favorites', 'hd', 'hidden'
+  selectedTuner: null, // e.g. 'tuner0'
+  tunerHistory: {},    // { tuner0: [ { timestamp, strength, quality, symbol, rate, isActive }, ... ] }
+  tunerSampleInterval: 1000, // 1000, 5000, 10000, 60000
+  tunerPollTimer: null,
+  isGraphPaused: false,
+  activeSeries: {
+    strength: true,
+    quality: true,
+    symbol: true,
+  },
 };
 
 // Global DOM Elements
@@ -48,9 +58,53 @@ const navTabs = document.querySelectorAll('.nav-tab');
 const tabViews = document.querySelectorAll('.tab-view');
 
 // Tuner Elements
+const tunersOverview = document.getElementById('tuners-overview');
 const tunersGrid = document.getElementById('tuners-grid');
 const tunerSummaryBadge = document.getElementById('tuner-summary-badge');
 const btnRefreshTuners = document.getElementById('btn-refresh-tuners');
+
+// Tuner Detail & Chart Elements
+const tunerDetailView = document.getElementById('tuner-detail-view');
+const btnBackToTuners = document.getElementById('btn-back-to-tuners');
+const detailStatusDot = document.getElementById('detail-status-dot');
+const detailStatusText = document.getElementById('detail-status-text');
+const detailTunerName = document.getElementById('detail-tuner-name');
+const detailSharedBadge = document.getElementById('detail-shared-badge');
+const detailChannelName = document.getElementById('detail-channel-name');
+const detailChannelNumber = document.getElementById('detail-channel-number');
+const detailClientsList = document.getElementById('detail-clients-list');
+const detailNetworkRate = document.getElementById('detail-network-rate');
+const sampleRatePills = document.querySelectorAll('#sample-rate-pills .pill');
+const graphLiveIndicator = document.getElementById('graph-live-indicator');
+const btnToggleGraphPause = document.getElementById('btn-toggle-graph-pause');
+const detailIdleNotice = document.getElementById('detail-idle-notice');
+
+const statCurrentStrength = document.getElementById('stat-current-strength');
+const statMinStrength = document.getElementById('stat-min-strength');
+const statAvgStrength = document.getElementById('stat-avg-strength');
+const statMaxStrength = document.getElementById('stat-max-strength');
+
+const statCurrentQuality = document.getElementById('stat-current-quality');
+const statMinQuality = document.getElementById('stat-min-quality');
+const statAvgQuality = document.getElementById('stat-avg-quality');
+const statMaxQuality = document.getElementById('stat-max-quality');
+
+const statCurrentSymbol = document.getElementById('stat-current-symbol');
+const statMinSymbol = document.getElementById('stat-min-symbol');
+const statAvgSymbol = document.getElementById('stat-avg-symbol');
+const statMaxSymbol = document.getElementById('stat-max-symbol');
+
+const chartSampleCount = document.getElementById('chart-sample-count');
+const chartLegend = document.getElementById('chart-legend');
+const chartContainer = document.getElementById('chart-container');
+const tunerChartSvg = document.getElementById('tuner-chart-svg');
+const chartGridGroup = document.getElementById('chart-grid-group');
+const chartPathsGroup = document.getElementById('chart-paths-group');
+const chartCrosshairGroup = document.getElementById('chart-crosshair-group');
+const chartTooltip = document.getElementById('chart-tooltip');
+const chartTimeStart = document.getElementById('chart-time-start');
+const chartTimeMid = document.getElementById('chart-time-mid');
+const chartTimeNow = document.getElementById('chart-time-now');
 
 // Lineup Elements
 const lineupSearch = document.getElementById('lineup-search');
@@ -119,6 +173,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTheme();
   setupNavigation();
   setupPollingControls();
+  setupTunerDetailEvents();
+  setupChartInteractions();
   setupLineupFilters();
   setupDvrPills();
   setupDeviceManagement();
@@ -212,22 +268,36 @@ function setupNavigation() {
     });
   });
 
-  window.addEventListener('hashchange', () => {
-    const hash = window.location.hash.replace('#', '').toLowerCase();
-    if (hash) {
-      const target = hash === 'channels' ? 'lineup' : hash;
-      if (['tuners', 'lineup', 'recordings', 'system'].includes(target)) {
-        if (state.activeTab !== target) {
-          switchTab(target, false);
+  function handleHashNavigation() {
+    const rawHash = window.location.hash.replace('#', '');
+    if (!rawHash) return;
+
+    const [tabPart, queryPart] = rawHash.split('?');
+    const targetTab = (tabPart === 'channels' ? 'lineup' : tabPart).toLowerCase();
+
+    if (['tuners', 'lineup', 'recordings', 'system'].includes(targetTab)) {
+      if (state.activeTab !== targetTab) {
+        switchTab(targetTab, false);
+      }
+      if (targetTab === 'tuners') {
+        const params = new URLSearchParams(queryPart || '');
+        const tunerId = params.get('tuner');
+        if (tunerId) {
+          openTunerDetail(tunerId, false);
+        } else if (state.selectedTuner) {
+          closeTunerDetail(false);
         }
       }
     }
-  });
+  }
+
+  window.addEventListener('hashchange', handleHashNavigation);
 
   // Read initial active tab from URL hash or localStorage
-  const urlHash = window.location.hash.replace('#', '').toLowerCase();
+  const rawInitialHash = window.location.hash.replace('#', '');
+  const [initTabPart, initQueryPart] = rawInitialHash.split('?');
   const savedTab = localStorage.getItem(STORAGE_ACTIVE_TAB);
-  const initialTarget = (urlHash === 'channels' ? 'lineup' : urlHash) || savedTab;
+  const initialTarget = (initTabPart === 'channels' ? 'lineup' : initTabPart).toLowerCase() || savedTab;
 
   if (initialTarget && ['tuners', 'lineup', 'recordings', 'system'].includes(initialTarget)) {
     state.activeTab = initialTarget;
@@ -240,6 +310,12 @@ function setupNavigation() {
     if (!window.location.hash) {
       const hashName = initialTarget === 'lineup' ? 'channels' : initialTarget;
       history.replaceState(null, '', `#${hashName}`);
+    } else if (initialTarget === 'tuners') {
+      const params = new URLSearchParams(initQueryPart || '');
+      const tunerId = params.get('tuner');
+      if (tunerId) {
+        openTunerDetail(tunerId, false);
+      }
     }
   }
 }
@@ -248,6 +324,13 @@ function switchTab(tabId, updateHash = true) {
   if (tabId === 'channels') tabId = 'lineup';
   state.activeTab = tabId;
   localStorage.setItem(STORAGE_ACTIVE_TAB, tabId);
+
+  // Stop tuner detail polling if switching away from tuners
+  if (tabId !== 'tuners') {
+    stopTunerDetailPolling();
+  } else if (state.selectedTuner && !state.isGraphPaused) {
+    startTunerDetailPolling();
+  }
 
   navTabs.forEach((tab) => {
     tab.classList.toggle('active', tab.getAttribute('data-tab') === tabId);
@@ -258,7 +341,10 @@ function switchTab(tabId, updateHash = true) {
   });
 
   if (updateHash) {
-    const hash = tabId === 'lineup' ? 'channels' : tabId;
+    let hash = tabId === 'lineup' ? 'channels' : tabId;
+    if (tabId === 'tuners' && state.selectedTuner) {
+      hash = `tuners?tuner=${state.selectedTuner}`;
+    }
     if (window.location.hash !== `#${hash}`) {
       history.replaceState(null, '', `#${hash}`);
     }
@@ -784,7 +870,9 @@ function renderTuners(statusItems) {
     if (isActive) activeCount++;
 
     const card = document.createElement('div');
-    card.className = `tuner-card ${isActive ? 'active' : ''}`;
+    card.className = `tuner-card ${isActive ? 'active' : ''} clickable-tuner-card`;
+    card.setAttribute('data-tuner-id', tunerName);
+    card.setAttribute('title', `Click to view real-time diagnostics & signal graph for ${tunerName.toUpperCase()}`);
 
     const tunerName = tuner.Resource || `tuner${index}`;
 
@@ -922,13 +1010,30 @@ function renderTuners(statusItems) {
         <span class="tuner-status-badge ${statusClass}">${statusText}</span>
       </div>
       ${detailsHtml}
+      <div class="tuner-card-action-hint">
+        📈 View Signal Graph →
+      </div>
     `;
+
+    card.addEventListener('click', () => {
+      openTunerDetail(tunerName);
+    });
 
     tunersGrid.appendChild(card);
   });
 
   tunerSummaryBadge.textContent = `${activeCount} / ${physicalTuners.length} Active`;
   tunerSummaryBadge.className = `badge ${activeCount > 0 ? 'badge-hd' : ''}`;
+
+  // If tuner detail view is currently open, record sample and update it
+  if (state.selectedTuner) {
+    const activeTuner = physicalTuners.find((t) =>
+      t.Resource && t.Resource.toLowerCase() === state.selectedTuner.toLowerCase()
+    ) || { Resource: state.selectedTuner };
+    recordTunerSample(activeTuner, liveSessions);
+    updateTunerDetailView(activeTuner, liveSessions);
+    renderTunerGraph();
+  }
 }
 
 function renderMetricBar(label, percent) {
@@ -950,6 +1055,489 @@ function renderMetricBar(label, percent) {
 }
 
 btnRefreshTuners.addEventListener('click', fetchTuners);
+
+/* ==========================================================================
+   Tuner Detail & Real-Time Diagnostics Graphing
+   ========================================================================== */
+
+function setupTunerDetailEvents() {
+  if (btnBackToTuners) {
+    btnBackToTuners.addEventListener('click', () => {
+      closeTunerDetail();
+    });
+  }
+
+  sampleRatePills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      sampleRatePills.forEach((p) => p.classList.remove('active'));
+      pill.classList.add('active');
+      const interval = parseInt(pill.getAttribute('data-interval'), 10) || 1000;
+      state.tunerSampleInterval = interval;
+      if (state.selectedTuner && !state.isGraphPaused) {
+        startTunerDetailPolling();
+      }
+    });
+  });
+
+  if (btnToggleGraphPause) {
+    btnToggleGraphPause.addEventListener('click', () => {
+      state.isGraphPaused = !state.isGraphPaused;
+      btnToggleGraphPause.textContent = state.isGraphPaused ? '▶ Resume' : '⏸ Pause';
+      if (graphLiveIndicator) {
+        graphLiveIndicator.classList.toggle('paused', state.isGraphPaused);
+      }
+      if (!state.isGraphPaused) {
+        startTunerDetailPolling();
+      } else {
+        stopTunerDetailPolling();
+      }
+    });
+  }
+
+  document.querySelectorAll('#chart-legend .legend-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const series = item.getAttribute('data-series');
+      if (series && state.activeSeries[series] !== undefined) {
+        state.activeSeries[series] = !state.activeSeries[series];
+        item.classList.toggle('active', state.activeSeries[series]);
+        renderTunerGraph();
+      }
+    });
+  });
+}
+
+function openTunerDetail(tunerId, updateHash = true) {
+  state.selectedTuner = tunerId;
+  tunersOverview.classList.add('hidden');
+  tunerDetailView.classList.remove('hidden');
+
+  if (updateHash) {
+    history.pushState(null, '', `#tuners?tuner=${tunerId}`);
+  }
+
+  // Find existing tuner data
+  const tuner = (state.tuners || []).find((item) =>
+    item.Resource && item.Resource.toLowerCase() === tunerId.toLowerCase()
+  ) || { Resource: tunerId };
+
+  const liveSessions = (state.tuners || []).filter((item) =>
+    !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
+  );
+
+  recordTunerSample(tuner, liveSessions);
+  updateTunerDetailView(tuner, liveSessions);
+  renderTunerGraph();
+
+  startTunerDetailPolling();
+}
+
+function closeTunerDetail(updateHash = true) {
+  state.selectedTuner = null;
+  stopTunerDetailPolling();
+  tunerDetailView.classList.add('hidden');
+  tunersOverview.classList.remove('hidden');
+
+  if (updateHash) {
+    history.pushState(null, '', '#tuners');
+  }
+}
+
+function startTunerDetailPolling() {
+  stopTunerDetailPolling();
+  if (state.isGraphPaused || !state.selectedTuner) return;
+
+  // Poll immediately, then start interval
+  pollTunerDetail();
+  state.tunerPollTimer = setInterval(pollTunerDetail, state.tunerSampleInterval);
+}
+
+function stopTunerDetailPolling() {
+  if (state.tunerPollTimer) {
+    clearInterval(state.tunerPollTimer);
+    state.tunerPollTimer = null;
+  }
+}
+
+async function pollTunerDetail() {
+  if (!state.selectedTuner || state.isGraphPaused) return;
+
+  try {
+    const ip = state.currentIp;
+    const res = await fetch(`http://${ip}/status.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const statusItems = await res.json();
+    state.tuners = statusItems;
+
+    const physicalTuners = statusItems.filter((item) =>
+      item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+    );
+    const liveSessions = statusItems.filter((item) =>
+      !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
+    );
+
+    const tuner = physicalTuners.find((item) =>
+      item.Resource && item.Resource.toLowerCase() === state.selectedTuner.toLowerCase()
+    ) || { Resource: state.selectedTuner };
+
+    recordTunerSample(tuner, liveSessions);
+    updateTunerDetailView(tuner, liveSessions);
+    renderTunerGraph();
+  } catch (err) {
+    console.warn('Error polling tuner detail:', err);
+  }
+}
+
+function recordTunerSample(tuner, liveSessions = []) {
+  const tunerId = state.selectedTuner;
+  if (!tunerId) return;
+
+  if (!state.tunerHistory[tunerId]) {
+    state.tunerHistory[tunerId] = [];
+  }
+
+  const history = state.tunerHistory[tunerId];
+  const isActive = Boolean(tuner.VctNumber || (tuner.TargetIP && tuner.TargetIP !== 'none'));
+
+  const sample = {
+    timestamp: Date.now(),
+    strength: tuner.SignalStrengthPercent ?? 0,
+    quality: tuner.SignalQualityPercent ?? 0,
+    symbol: tuner.SymbolQualityPercent ?? 0,
+    rate: tuner.NetworkRate ?? 0,
+    isActive,
+  };
+
+  history.push(sample);
+  // Keep ring buffer of last 60 samples
+  if (history.length > 60) {
+    history.shift();
+  }
+}
+
+function updateTunerDetailView(tunerData, liveSessions = []) {
+  const tunerId = state.selectedTuner;
+  if (!tunerId) return;
+
+  const tuner = tunerData || (state.tuners || []).find((item) =>
+    item.Resource && item.Resource.toLowerCase() === tunerId.toLowerCase()
+  ) || { Resource: tunerId };
+
+  const isActive = Boolean(tuner.VctNumber || (tuner.TargetIP && tuner.TargetIP !== 'none'));
+
+  // Title
+  detailTunerName.textContent = (tuner.Resource || tunerId).toUpperCase();
+
+  // Find all client sessions sharing this tuner
+  const clientSessions = [];
+  if (tuner.TargetIP && tuner.TargetIP !== '[::1]' && tuner.TargetIP !== '::1' && tuner.TargetIP !== '127.0.0.1' && tuner.TargetIP !== 'none') {
+    clientSessions.push({ type: 'client', ip: tuner.TargetIP });
+  }
+
+  const matchingSessions = (liveSessions || []).filter((s) => {
+    if (!s.Name) return false;
+    return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
+  });
+
+  matchingSessions.forEach((s) => {
+    const isRecord = (s.Resource && s.Resource.toLowerCase().includes('record')) ||
+                     (s.Name && s.Name.toLowerCase().includes('record'));
+    if (!clientSessions.some((c) => c.ip === s.TargetIP && c.type === (isRecord ? 'record' : 'client'))) {
+      clientSessions.push({
+        type: isRecord ? 'record' : 'client',
+        ip: s.TargetIP || 'Local',
+        name: s.Name || '',
+      });
+    }
+  });
+
+  const hasExternalClient = clientSessions.some((c) => c.type === 'client' && c.ip !== 'Local');
+
+  // Check recording
+  const nowSec = Math.floor(Date.now() / 1000);
+  const hasRecordSession = clientSessions.some((c) => c.type === 'record');
+  const hasEpisodeRecording = (state.episodes || []).some((ep) => {
+    return ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1 &&
+           (ep.ChannelNumber === tuner.VctNumber || (tuner.VctNumber && String(ep.ChannelNumber).includes(String(tuner.VctNumber))) || (ep.ChannelName && tuner.VctName && ep.ChannelName.toLowerCase() === tuner.VctName.toLowerCase()));
+  });
+  const isLocalOnly = !hasExternalClient && (clientSessions.length === 0 || clientSessions.every((c) => c.ip === 'Local'));
+  const isRecording = hasRecordSession || hasEpisodeRecording || (isLocalOnly && state.hasDvr);
+
+  // Status Badge / Text
+  let statusText = 'Idle';
+  let dotClass = '';
+  if (isActive) {
+    if (isRecording && hasExternalClient) {
+      statusText = 'Streaming & Recording';
+      dotClass = 'recording';
+    } else if (isRecording) {
+      statusText = 'Recording';
+      dotClass = 'recording';
+    } else {
+      statusText = 'Streaming';
+      dotClass = 'connected';
+    }
+  }
+  detailStatusText.textContent = statusText;
+  detailStatusDot.className = `status-dot ${dotClass}`;
+
+  // Shared Badge
+  if (clientSessions.length > 1) {
+    detailSharedBadge.innerHTML = `<span class="badge badge-hd">Shared (${clientSessions.length})</span>`;
+  } else {
+    detailSharedBadge.innerHTML = '';
+  }
+
+  // Channel Info
+  detailChannelName.textContent = tuner.VctName || (isActive ? 'Channel In Use' : '—');
+  detailChannelNumber.textContent = tuner.VctNumber ? `Ch ${tuner.VctNumber}` : '';
+
+  // Client(s)
+  if (clientSessions.length === 0) {
+    detailClientsList.innerHTML = isActive ? '<code>Local</code>' : '<span class="text-muted">None</span>';
+  } else {
+    detailClientsList.innerHTML = clientSessions.map((c) =>
+      `<span class="client-badge">${c.type === 'record' ? '📼 DVR' : c.ip}</span>`
+    ).join(' ');
+  }
+
+  // Network Bitrate / Frequency
+  if (tuner.NetworkRate) {
+    detailNetworkRate.innerHTML = `<strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong>`;
+  } else if (tuner.Frequency) {
+    detailNetworkRate.textContent = `${(tuner.Frequency / 1000000).toFixed(3)} MHz`;
+  } else {
+    detailNetworkRate.innerHTML = '<span class="text-muted">—</span>';
+  }
+
+  // Idle Notice
+  if (isActive) {
+    detailIdleNotice.classList.add('hidden');
+  } else {
+    detailIdleNotice.classList.remove('hidden');
+  }
+
+  // Metrics (Current, Min, Avg, Max)
+  const history = state.tunerHistory[tunerId] || [];
+  const currentStrength = tuner.SignalStrengthPercent ?? 0;
+  const currentQuality = tuner.SignalQualityPercent ?? 0;
+  const currentSymbol = tuner.SymbolQualityPercent ?? 0;
+
+  statCurrentStrength.textContent = `${currentStrength}%`;
+  statCurrentQuality.textContent = `${currentQuality}%`;
+  statCurrentSymbol.textContent = `${currentSymbol}%`;
+
+  if (history.length > 0) {
+    const calcStats = (key) => {
+      const vals = history.map((s) => s[key] ?? 0);
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const avg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
+      return { min, max, avg };
+    };
+
+    const strStats = calcStats('strength');
+    statMinStrength.textContent = `${strStats.min}%`;
+    statAvgStrength.textContent = `${strStats.avg}%`;
+    statMaxStrength.textContent = `${strStats.max}%`;
+
+    const qStats = calcStats('quality');
+    statMinQuality.textContent = `${qStats.min}%`;
+    statAvgQuality.textContent = `${qStats.avg}%`;
+    statMaxQuality.textContent = `${qStats.max}%`;
+
+    const symStats = calcStats('symbol');
+    statMinSymbol.textContent = `${symStats.min}%`;
+    statAvgSymbol.textContent = `${symStats.avg}%`;
+    statMaxSymbol.textContent = `${symStats.max}%`;
+  } else {
+    [statMinStrength, statAvgStrength, statMaxStrength,
+     statMinQuality, statAvgQuality, statMaxQuality,
+     statMinSymbol, statAvgSymbol, statMaxSymbol].forEach((el) => {
+      if (el) el.textContent = '—';
+    });
+  }
+}
+
+function renderTunerGraph() {
+  const tunerId = state.selectedTuner;
+  if (!tunerId || !tunerChartSvg) return;
+
+  const history = state.tunerHistory[tunerId] || [];
+  if (chartSampleCount) {
+    chartSampleCount.textContent = `${history.length} sample${history.length === 1 ? '' : 's'}`;
+  }
+
+  // 1. Grid & Y-Axis
+  const gridPcts = [100, 75, 50, 25, 0];
+  let gridHtml = '';
+  gridPcts.forEach((pct) => {
+    const y = 20 + (1 - pct / 100) * 230;
+    gridHtml += `
+      <line x1="45" y1="${y}" x2="780" y2="${y}" stroke="rgba(255,255,255,0.08)" stroke-dasharray="4,4" />
+      <text x="40" y="${y + 4}" fill="#64748b" font-size="11" text-anchor="end" font-family="monospace">${pct}%</text>
+    `;
+  });
+  chartGridGroup.innerHTML = gridHtml;
+
+  // 2. Paths
+  if (history.length === 0) {
+    chartPathsGroup.innerHTML = `
+      <text x="412" y="140" fill="#64748b" text-anchor="middle" font-size="13">
+        Collecting signal metrics...
+      </text>
+    `;
+    if (chartTimeStart) chartTimeStart.textContent = '—';
+    if (chartTimeMid) chartTimeMid.textContent = '—';
+    if (chartTimeNow) chartTimeNow.textContent = 'Now';
+    return;
+  }
+
+  const paddingLeft = 45;
+  const paddingRight = 20;
+  const plotW = 800 - paddingLeft - paddingRight;
+  const stepX = plotW / Math.max(history.length - 1, 1);
+
+  let pathsHtml = '';
+
+  const seriesMeta = [
+    { key: 'strength', color: '#38bdf8', grad: 'grad-strength' },
+    { key: 'quality', color: '#34d399', grad: 'grad-quality' },
+    { key: 'symbol', color: '#a78bfa', grad: 'grad-symbol' },
+  ];
+
+  seriesMeta.forEach(({ key, color, grad }) => {
+    if (!state.activeSeries[key]) return;
+
+    const pts = history.map((s, idx) => {
+      const x = paddingLeft + idx * stepX;
+      const val = s[key] ?? 0;
+      const y = 20 + (1 - val / 100) * 230;
+      return { x, y, val };
+    });
+
+    if (pts.length === 1) {
+      const pt = pts[0];
+      pathsHtml += `
+        <line x1="45" y1="${pt.y}" x2="780" y2="${pt.y}" stroke="${color}" stroke-width="1.5" stroke-dasharray="2,2" opacity="0.4" />
+        <circle cx="${pt.x}" cy="${pt.y}" r="5" fill="${color}" stroke="#0b1120" stroke-width="2" />
+      `;
+    } else {
+      const lineD = pts.reduce((acc, pt, i) => (i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`), '');
+      const areaD = `${lineD} L ${pts[pts.length - 1].x} 250 L ${pts[0].x} 250 Z`;
+
+      pathsHtml += `<path d="${areaD}" fill="url(#${grad})" />`;
+      pathsHtml += `<path d="${lineD}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`;
+
+      const lastPt = pts[pts.length - 1];
+      pathsHtml += `<circle cx="${lastPt.x}" cy="${lastPt.y}" r="4.5" fill="${color}" stroke="#0b1120" stroke-width="2" />`;
+    }
+  });
+
+  chartPathsGroup.innerHTML = pathsHtml;
+
+  // 3. X-Axis Time Labels
+  const firstSample = history[0];
+  const lastSample = history[history.length - 1];
+  const durationSec = Math.round((lastSample.timestamp - firstSample.timestamp) / 1000);
+
+  if (chartTimeStart) {
+    chartTimeStart.textContent = durationSec > 0 ? `-${durationSec}s` : '0s';
+  }
+  if (chartTimeMid) {
+    chartTimeMid.textContent = durationSec > 0 ? `-${Math.round(durationSec / 2)}s` : '';
+  }
+  if (chartTimeNow) {
+    chartTimeNow.textContent = 'Now (Live)';
+  }
+}
+
+function setupChartInteractions() {
+  if (!chartContainer) return;
+
+  chartContainer.addEventListener('mousemove', (e) => {
+    handleChartHover(e.clientX, e.clientY);
+  });
+
+  chartContainer.addEventListener('mouseleave', () => {
+    chartCrosshairGroup.innerHTML = '';
+    chartTooltip.classList.add('hidden');
+  });
+
+  chartContainer.addEventListener('touchmove', (e) => {
+    if (e.touches && e.touches[0]) {
+      handleChartHover(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  chartContainer.addEventListener('touchend', () => {
+    chartCrosshairGroup.innerHTML = '';
+    chartTooltip.classList.add('hidden');
+  });
+}
+
+function handleChartHover(clientX, clientY) {
+  const tunerId = state.selectedTuner;
+  if (!tunerId) return;
+  const history = state.tunerHistory[tunerId] || [];
+  if (history.length === 0) return;
+
+  const rect = chartContainer.getBoundingClientRect();
+  const relX = clientX - rect.left;
+  const relY = clientY - rect.top;
+
+  const svgX = (relX / rect.width) * 800;
+  const paddingLeft = 45;
+  const paddingRight = 20;
+  const plotW = 800 - paddingLeft - paddingRight;
+
+  if (svgX < paddingLeft || svgX > 800 - paddingRight) {
+    chartCrosshairGroup.innerHTML = '';
+    chartTooltip.classList.add('hidden');
+    return;
+  }
+
+  const stepX = plotW / Math.max(history.length - 1, 1);
+  const idx = Math.min(Math.max(Math.round((svgX - paddingLeft) / stepX), 0), history.length - 1);
+  const sample = history[idx];
+  if (!sample) return;
+
+  const ptX = paddingLeft + idx * stepX;
+
+  let crosshairHtml = `<line x1="${ptX}" y1="20" x2="${ptX}" y2="250" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" stroke-dasharray="3,3" />`;
+
+  const seriesMeta = [
+    { key: 'strength', color: '#38bdf8' },
+    { key: 'quality', color: '#34d399' },
+    { key: 'symbol', color: '#a78bfa' },
+  ];
+
+  seriesMeta.forEach(({ key, color }) => {
+    if (state.activeSeries[key]) {
+      const val = sample[key] ?? 0;
+      const ptY = 20 + (1 - val / 100) * 230;
+      crosshairHtml += `<circle cx="${ptX}" cy="${ptY}" r="4" fill="${color}" stroke="#0b1120" stroke-width="2" />`;
+    }
+  });
+
+  chartCrosshairGroup.innerHTML = crosshairHtml;
+
+  const timeStr = new Date(sample.timestamp).toLocaleTimeString();
+  const rateMb = sample.rate ? (sample.rate / 1000000).toFixed(2) + ' Mbps' : '—';
+
+  chartTooltip.innerHTML = `
+    <div class="chart-tooltip-time">${timeStr}</div>
+    ${state.activeSeries.strength ? `<div class="chart-tooltip-row"><span class="label" style="color: #38bdf8;">Strength:</span><span class="val">${sample.strength}%</span></div>` : ''}
+    ${state.activeSeries.quality ? `<div class="chart-tooltip-row"><span class="label" style="color: #34d399;">SNR Quality:</span><span class="val">${sample.quality}%</span></div>` : ''}
+    ${state.activeSeries.symbol ? `<div class="chart-tooltip-row"><span class="label" style="color: #a78bfa;">Symbol:</span><span class="val">${sample.symbol}%</span></div>` : ''}
+    ${sample.rate ? `<div class="chart-tooltip-row"><span class="label">Rate:</span><span class="val">${rateMb}</span></div>` : ''}
+  `;
+
+  const tooltipX = relX > rect.width - 160 ? relX - 150 : relX + 15;
+  const tooltipY = Math.min(Math.max(relY - 30, 10), rect.height - 120);
+  chartTooltip.style.left = `${tooltipX}px`;
+  chartTooltip.style.top = `${tooltipY}px`;
+  chartTooltip.classList.remove('hidden');
+}
 
 /* ==========================================================================
    Polling Controls

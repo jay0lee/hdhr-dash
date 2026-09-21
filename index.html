@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.25" />
+  <link rel="stylesheet" href="style.css?v=2.0.26" />
 </head>
 <body>
   <div class="app-shell">
@@ -102,17 +102,189 @@
 
       <!-- Tab 1: Tuners View -->
       <section id="view-tuners" class="tab-view active">
-        <div class="view-header">
-          <h2>Tuner Activity & Status</h2>
-          <div class="view-actions">
-            <span id="tuner-summary-badge" class="badge">Checking...</span>
-            <button id="btn-refresh-tuners" class="btn btn-sm btn-secondary">↻ Refresh</button>
+        <!-- Overview Grid View -->
+        <div id="tuners-overview">
+          <div class="view-header">
+            <h2>Tuner Activity & Status</h2>
+            <div class="view-actions">
+              <span id="tuner-summary-badge" class="badge">Checking...</span>
+              <button id="btn-refresh-tuners" class="btn btn-sm btn-secondary">↻ Refresh</button>
+            </div>
+          </div>
+
+          <div id="tuners-grid" class="tuners-grid">
+            <!-- Dynamically populated tuner cards -->
+            <div class="loading-placeholder">Loading tuner status...</div>
           </div>
         </div>
 
-        <div id="tuners-grid" class="tuners-grid">
-          <!-- Dynamically populated tuner cards -->
-          <div class="loading-placeholder">Loading tuner status...</div>
+        <!-- Single Tuner Detail & Real-Time Graph View -->
+        <div id="tuner-detail-view" class="tuner-detail-view hidden">
+          <div class="tuner-detail-topbar">
+            <button id="btn-back-to-tuners" class="btn btn-sm btn-secondary">
+              ← All Tuners
+            </button>
+            <div class="tuner-detail-status-pill">
+              <span id="detail-status-dot" class="status-dot"></span>
+              <span id="detail-status-text">Idle</span>
+            </div>
+          </div>
+
+          <div class="tuner-detail-header-card card">
+            <div class="tuner-detail-header-main">
+              <div>
+                <div class="tuner-title-row">
+                  <h2 id="detail-tuner-name" class="detail-tuner-title">TUNER0</h2>
+                  <span id="detail-shared-badge"></span>
+                </div>
+                <div class="detail-channel-info">
+                  <span id="detail-channel-name" class="detail-channel-name">—</span>
+                  <span id="detail-channel-number" class="detail-channel-number"></span>
+                </div>
+              </div>
+              <div class="detail-tuner-meta">
+                <div id="detail-clients-display" class="detail-meta-item">
+                  <span class="meta-label">Client(s):</span>
+                  <span id="detail-clients-list" class="meta-value">None</span>
+                </div>
+                <div id="detail-rate-display" class="detail-meta-item">
+                  <span class="meta-label">Rate / Freq:</span>
+                  <span id="detail-network-rate" class="meta-value">—</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Controls: Sample Rate & Pause -->
+            <div class="tuner-controls-bar">
+              <div class="sample-rate-group">
+                <span class="control-label">Sample Rate:</span>
+                <div class="pill-group" id="sample-rate-pills">
+                  <button class="pill active" data-interval="1000">1s</button>
+                  <button class="pill" data-interval="5000">5s</button>
+                  <button class="pill" data-interval="10000">10s</button>
+                  <button class="pill" data-interval="60000">1m</button>
+                </div>
+              </div>
+              <div class="playback-controls">
+                <span id="graph-live-indicator" class="live-pulse-dot" title="Live Polling Active"></span>
+                <button id="btn-toggle-graph-pause" class="btn btn-sm btn-secondary">
+                  ⏸ Pause
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Idle Tuner Notice (shown when tuner is idle) -->
+          <div id="detail-idle-notice" class="card idle-notice-card hidden">
+            <div class="idle-notice-icon">📡</div>
+            <div class="idle-notice-text">
+              <h4>Tuner is Currently Idle</h4>
+              <p class="text-muted">The HDHomeRun powers down its demodulator when idle and only measures RF signal when actively tuned to a channel. Tune to a channel on your TV, VLC, Channels, or Plex to start live graphing.</p>
+            </div>
+          </div>
+
+          <!-- Real-Time Metrics Summary Cards (Current, Min, Max, Avg) -->
+          <div class="metrics-summary-grid">
+            <div class="card metric-summary-card metric-strength">
+              <div class="metric-card-header">
+                <div class="metric-title-group">
+                  <span class="metric-dot-indicator dot-strength"></span>
+                  <h4>Signal Strength</h4>
+                </div>
+                <span id="stat-current-strength" class="metric-big-value">0%</span>
+              </div>
+              <p class="metric-desc">Raw RF power from antenna. Target: <strong>75–100%</strong> (≥60% min).</p>
+              <div class="metric-stats-row">
+                <div><span>Min:</span> <strong id="stat-min-strength">—</strong></div>
+                <div><span>Avg:</span> <strong id="stat-avg-strength">—</strong></div>
+                <div><span>Max:</span> <strong id="stat-max-strength">—</strong></div>
+              </div>
+            </div>
+
+            <div class="card metric-summary-card metric-quality">
+              <div class="metric-card-header">
+                <div class="metric-title-group">
+                  <span class="metric-dot-indicator dot-quality"></span>
+                  <h4>SNR Quality</h4>
+                </div>
+                <span id="stat-current-quality" class="metric-big-value">0%</span>
+              </div>
+              <p class="metric-desc">Signal-to-noise ratio. Target: <strong>80–100%</strong> (key for antenna aiming).</p>
+              <div class="metric-stats-row">
+                <div><span>Min:</span> <strong id="stat-min-quality">—</strong></div>
+                <div><span>Avg:</span> <strong id="stat-avg-quality">—</strong></div>
+                <div><span>Max:</span> <strong id="stat-max-quality">—</strong></div>
+              </div>
+            </div>
+
+            <div class="card metric-summary-card metric-symbol">
+              <div class="metric-card-header">
+                <div class="metric-title-group">
+                  <span class="metric-dot-indicator dot-symbol"></span>
+                  <h4>Symbol Quality</h4>
+                </div>
+                <span id="stat-current-symbol" class="metric-big-value">0%</span>
+              </div>
+              <p class="metric-desc">Data packet integrity. Target: <strong>100%</strong> (&lt;100% = pixelation/pops).</p>
+              <div class="metric-stats-row">
+                <div><span>Min:</span> <strong id="stat-min-symbol">—</strong></div>
+                <div><span>Avg:</span> <strong id="stat-avg-symbol">—</strong></div>
+                <div><span>Max:</span> <strong id="stat-max-symbol">—</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chart Card with SVG Graph -->
+          <div class="card chart-card">
+            <div class="chart-header">
+              <div class="chart-title-group">
+                <h3>Reception Diagnostics Over Time</h3>
+                <span id="chart-sample-count" class="text-sm text-muted">0 samples</span>
+              </div>
+              <div class="chart-legend" id="chart-legend">
+                <button class="legend-item active" data-series="strength">
+                  <span class="legend-color-box color-strength"></span>
+                  Signal Strength
+                </button>
+                <button class="legend-item active" data-series="quality">
+                  <span class="legend-color-box color-quality"></span>
+                  SNR Quality
+                </button>
+                <button class="legend-item active" data-series="symbol">
+                  <span class="legend-color-box color-symbol"></span>
+                  Symbol Quality
+                </button>
+              </div>
+            </div>
+
+            <div class="chart-svg-container" id="chart-container">
+              <svg id="tuner-chart-svg" viewBox="0 0 800 280" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="grad-strength" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.25" />
+                    <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0" />
+                  </linearGradient>
+                  <linearGradient id="grad-quality" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#34d399" stop-opacity="0.25" />
+                    <stop offset="100%" stop-color="#34d399" stop-opacity="0.0" />
+                  </linearGradient>
+                  <linearGradient id="grad-symbol" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.25" />
+                    <stop offset="100%" stop-color="#a78bfa" stop-opacity="0.0" />
+                  </linearGradient>
+                </defs>
+                <g id="chart-grid-group"></g>
+                <g id="chart-paths-group"></g>
+                <g id="chart-crosshair-group"></g>
+              </svg>
+              <div id="chart-tooltip" class="chart-tooltip hidden"></div>
+            </div>
+            <div class="chart-xaxis-labels">
+              <span id="chart-time-start">Oldest</span>
+              <span id="chart-time-mid">Midpoint</span>
+              <span id="chart-time-now">Now (Live)</span>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -393,6 +565,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.25"></script>
+  <script src="app.js?v=2.0.26"></script>
 </body>
 </html>
