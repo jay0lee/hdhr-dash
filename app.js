@@ -420,30 +420,25 @@ async function updateSystemLiveStatus() {
     const activeClients = [];
     const activeRecordings = [];
 
-    // Check physical tuners
+    // Check physical tuners for direct external clients
     physicalTuners.forEach((tuner) => {
       const targetIp = tuner.TargetIP;
-      const isLocalOrRecord =
-        !targetIp ||
-        targetIp === 'none' ||
-        targetIp === '127.0.0.1' ||
-        targetIp === '::1' ||
-        targetIp === '[::1]' ||
-        targetIp === ip;
+      const isExternalIp =
+        targetIp &&
+        targetIp !== 'none' &&
+        targetIp !== '127.0.0.1' &&
+        targetIp !== '::1' &&
+        targetIp !== '[::1]' &&
+        targetIp !== ip;
 
       const hasChannel = Boolean(tuner.VctNumber || tuner.VctName);
 
-      if (hasChannel) {
+      if (hasChannel && isExternalIp) {
         const chLabel = tuner.VctNumber
           ? `Ch ${tuner.VctNumber}${tuner.VctName ? ' ' + tuner.VctName : ''}`
           : (tuner.VctName || tuner.Resource);
 
-        if (isLocalOrRecord && (targetIp === ip || targetIp === '127.0.0.1' || targetIp === '[::1]' || targetIp === '::1')) {
-          activeRecordings.push({
-            channel: chLabel,
-            target: targetIp,
-          });
-        } else if (!isLocalOrRecord) {
+        if (!activeClients.some((c) => c.ip === targetIp)) {
           activeClients.push({
             ip: targetIp,
             channel: chLabel,
@@ -482,6 +477,23 @@ async function updateSystemLiveStatus() {
         }
       }
     });
+
+    // Check if the HDHR itself is currently writing an in-progress recording to its storage drive
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (Array.isArray(state.episodes)) {
+      state.episodes.forEach((ep) => {
+        if (ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1) {
+          const epLabel = ep.EpisodeTitle ? `${ep.Title}: ${ep.EpisodeTitle}` : (ep.Title || 'DVR Recording');
+          const fullLabel = ep.ChannelNumber ? `${epLabel} (Ch ${ep.ChannelNumber})` : epLabel;
+          if (!activeRecordings.some((r) => r.channel === fullLabel)) {
+            activeRecordings.push({
+              channel: fullLabel,
+              target: 'HDHR Storage',
+            });
+          }
+        }
+      });
+    }
 
     // 3. Render Active Clients
     if (infoActiveClients) {
