@@ -611,6 +611,26 @@ body {
   border: 1px solid rgba(99, 102, 241, 0.4);
 }
 
+.badge-favorite {
+  background-color: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.badge-disabled {
+  background-color: rgba(244, 63, 94, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.lineup-row-disabled td {
+  opacity: 0.5;
+}
+
+.lineup-row-disabled:hover td {
+  opacity: 0.85;
+}
+
 .table-actions {
   display: flex;
   gap: 6px;

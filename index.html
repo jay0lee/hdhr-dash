@@ -12,7 +12,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.3" />
+  <link rel="stylesheet" href="style.css?v=2.0.4" />
 </head>
 <body>
   <div class="app-shell">
@@ -116,10 +116,22 @@
 
         <div class="filter-bar">
           <input type="text" id="lineup-search" placeholder="Search channels by name or number (e.g. 5.1, NBC)..." />
-          <div class="filter-pills">
-            <button class="pill active" data-filter="all">All</button>
-            <button class="pill" data-filter="hd">HD Only</button>
-            <button class="pill" data-filter="favorites">Favorites</button>
+          <div class="filter-pills" id="lineup-filter-pills">
+            <button class="pill active" data-filter="allowed">
+              Allowed <span id="lineup-allowed-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-filter="all">
+              All <span id="lineup-all-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-filter="favorites">
+              Favorites ⭐ <span id="lineup-fav-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-filter="hd">
+              HD Only <span id="lineup-hd-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-filter="hidden">
+              Hidden ❌ <span id="lineup-hidden-pill" class="badge-pill">0</span>
+            </button>
           </div>
         </div>
 
@@ -245,6 +257,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=2.0.3"></script>
+  <script src="app.js?v=2.0.4"></script>
 </body>
 </html>

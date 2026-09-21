@@ -25,7 +25,7 @@ const state = {
   pollInterval: 2500,
   pollTimer: null,
   filterText: '',
-  filterType: 'all', // 'all', 'hd', 'favorites'
+  filterType: 'allowed', // 'allowed', 'all', 'favorites', 'hd', 'hidden'
 };
 
 // Global DOM Elements
@@ -46,7 +46,12 @@ const btnRefreshTuners = document.getElementById('btn-refresh-tuners');
 
 // Lineup Elements
 const lineupSearch = document.getElementById('lineup-search');
-const filterPills = document.querySelectorAll('.filter-pills .pill');
+const lineupFilterPills = document.querySelectorAll('#lineup-filter-pills .pill');
+const lineupAllowedPill = document.getElementById('lineup-allowed-pill');
+const lineupAllPill = document.getElementById('lineup-all-pill');
+const lineupFavPill = document.getElementById('lineup-fav-pill');
+const lineupHdPill = document.getElementById('lineup-hd-pill');
+const lineupHiddenPill = document.getElementById('lineup-hidden-pill');
 const lineupTbody = document.getElementById('lineup-tbody');
 const lineupCountBadge = document.getElementById('lineup-count-badge');
 const btnRefreshLineup = document.getElementById('btn-refresh-lineup');
@@ -530,12 +535,25 @@ async function fetchLineup() {
   lineupTbody.innerHTML = '<tr><td colspan="4" class="empty-state">Loading channels...</td></tr>';
 
   try {
-    const res = await fetch(`http://${ip}/lineup.json`);
+    // Query with show=found to get all discovered channels including hidden/disabled ones
+    const res = await fetch(`http://${ip}/lineup.json?show=found`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const lineup = await res.json();
     state.lineup = Array.isArray(lineup) ? lineup : [];
 
-    lineupCountBadge.textContent = state.lineup.length;
+    // Update count pill badges
+    const allowedChannels = state.lineup.filter((ch) => ch.Enabled !== 0);
+    const hiddenChannels = state.lineup.filter((ch) => ch.Enabled === 0);
+    const favChannels = state.lineup.filter((ch) => ch.Favorite === 1);
+    const hdChannels = state.lineup.filter((ch) => ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')));
+
+    lineupAllowedPill.textContent = allowedChannels.length;
+    lineupAllPill.textContent = state.lineup.length;
+    lineupFavPill.textContent = favChannels.length;
+    lineupHdPill.textContent = hdChannels.length;
+    lineupHiddenPill.textContent = hiddenChannels.length;
+
+    lineupCountBadge.textContent = allowedChannels.length;
     lineupCountBadge.classList.remove('hidden');
 
     renderLineup();
@@ -551,9 +569,9 @@ function setupLineupFilters() {
     renderLineup();
   });
 
-  filterPills.forEach((pill) => {
+  lineupFilterPills.forEach((pill) => {
     pill.addEventListener('click', () => {
-      filterPills.forEach((p) => p.classList.remove('active'));
+      lineupFilterPills.forEach((p) => p.classList.remove('active'));
       pill.classList.add('active');
       state.filterType = pill.getAttribute('data-filter');
       renderLineup();
@@ -575,13 +593,19 @@ function renderLineup() {
     if (!matchesText) return false;
 
     // Pill filters
-    if (state.filterType === 'hd') {
-      return ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD'));
+    if (state.filterType === 'allowed') {
+      return ch.Enabled !== 0;
     }
     if (state.filterType === 'favorites') {
       return ch.Favorite === 1;
     }
-    return true;
+    if (state.filterType === 'hd') {
+      return ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD'));
+    }
+    if (state.filterType === 'hidden') {
+      return ch.Enabled === 0;
+    }
+    return true; // 'all'
   });
 
   if (filtered.length === 0) {
@@ -593,16 +617,33 @@ function renderLineup() {
   filtered.forEach((ch) => {
     const tr = document.createElement('tr');
     const isHd = ch.HD === 1;
+    const isHidden = ch.Enabled === 0;
+    const isFav = ch.Favorite === 1;
     const streamUrl = ch.URL || `http://${state.currentIp}:5004/auto/v${ch.GuideNumber}`;
+
+    if (isHidden) {
+      tr.className = 'lineup-row-disabled';
+    }
+
+    let statusBadge = '';
+    if (isHidden) {
+      statusBadge = '<span class="badge badge-disabled">Hidden ❌</span>';
+    } else if (isFav) {
+      statusBadge = '<span class="badge badge-favorite">⭐ Fav</span>';
+    } else {
+      statusBadge = '<span class="badge">Allowed</span>';
+    }
 
     tr.innerHTML = `
       <td class="channel-num-cell">${ch.GuideNumber}</td>
       <td class="channel-name-cell">
         ${ch.GuideName || 'Unknown'}
-        ${ch.Favorite === 1 ? ' ⭐' : ''}
       </td>
       <td>
-        ${isHd ? '<span class="badge badge-hd">HD</span>' : '<span class="badge">SD</span>'}
+        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+          ${statusBadge}
+          ${isHd ? '<span class="badge badge-hd">HD</span>' : '<span class="badge">SD</span>'}
+        </div>
       </td>
       <td class="table-actions">
         <a href="${streamUrl}" target="_blank" class="btn btn-sm btn-primary" title="Stream in Browser/VLC">
