@@ -743,16 +743,24 @@ function renderLineup() {
       `;
     }
 
-    // Play action
-    let playAction = `
-      <a href="${streamUrl}" target="_blank" class="btn btn-sm btn-primary" title="Stream in Browser/VLC">
-        ▶ Play
-      </a>
-    `;
+    // Actions for channel
+    let actionsHtml = '';
     if (isDrm) {
-      playAction = `
-        <button class="btn btn-sm btn-drm-locked" title="DRM Protected: Playable only via official HDHomeRun app with DRM license">
+      actionsHtml = `
+        <button class="btn btn-sm btn-drm-locked" title="ATSC 3.0 DRM Encrypted: Playable only in official HDHomeRun app with active license, not in VLC or other players">
           🔒 DRM
+        </button>
+        <button class="btn btn-sm btn-secondary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL">
+          📋 Copy URL
+        </button>
+      `;
+    } else {
+      actionsHtml = `
+        <button class="btn btn-sm btn-primary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL to paste into VLC or media player">
+          📋 Copy URL
+        </button>
+        <button class="btn btn-sm btn-secondary btn-download-m3u" data-num="${ch.GuideNumber}" data-name="${ch.GuideName || ''}" data-url="${streamUrl}" title="Download .m3u stream playlist to open directly in VLC / default player">
+          📺 M3U
         </button>
       `;
     }
@@ -774,22 +782,44 @@ function renderLineup() {
         ${signalHtml}
       </td>
       <td class="table-actions">
-        ${playAction}
-        <button class="btn btn-sm btn-secondary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL">
-          📋
-        </button>
+        ${actionsHtml}
       </td>
     `;
     lineupTbody.appendChild(tr);
   });
 
+  // Attach clipboard copy listeners
   document.querySelectorAll('.btn-copy-url').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const url = btn.getAttribute('data-url');
-      await navigator.clipboard.writeText(url);
-      const originalText = btn.textContent;
-      btn.textContent = '✓';
-      setTimeout(() => (btn.textContent = originalText), 1500);
+      try {
+        await navigator.clipboard.writeText(url);
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        setTimeout(() => (btn.innerHTML = originalText), 1500);
+      } catch (err) {
+        console.error('Failed to copy', err);
+      }
+    });
+  });
+
+  // Attach single-channel M3U download listeners
+  document.querySelectorAll('.btn-download-m3u').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const chNum = btn.getAttribute('data-num');
+      const chName = btn.getAttribute('data-name') || `Channel ${chNum}`;
+      const url = btn.getAttribute('data-url');
+      const m3uContent = `#EXTM3U\n#EXTINF:-1 tvg-id="v${chNum}" tvg-name="${chName}",${chName}\n${url}\n`;
+      const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl;charset=utf-8' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      const cleanName = chName.replace(/[^a-zA-Z0-9_-]/g, '_');
+      a.download = `${cleanName}-${chNum}.m3u`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
     });
   });
 }
@@ -1017,8 +1047,8 @@ function renderEpisodes(episodes) {
       </div>
 
       <div class="recording-actions">
-        ${playUrl ? `<a href="${playUrl}" target="_blank" class="btn btn-sm btn-primary">▶ Play Recording</a>` : ''}
-        ${playUrl ? `<button class="btn btn-sm btn-secondary btn-copy-url" data-url="${playUrl}">📋 Copy Link</button>` : ''}
+        ${playUrl ? `<button class="btn btn-sm btn-primary btn-copy-url" data-url="${playUrl}" title="Copy recording URL to paste in VLC / media player">📋 Copy Link</button>` : ''}
+        ${playUrl ? `<button class="btn btn-sm btn-secondary btn-download-m3u" data-num="${ep.GuideNumber || ''}" data-name="${(ep.Title || 'Recording') + (ep.EpisodeTitle ? ' - ' + ep.EpisodeTitle : '')}" data-url="${playUrl}" title="Download .m3u to open recording directly in VLC">📺 M3U</button>` : ''}
       </div>
     `;
 
@@ -1029,10 +1059,34 @@ function renderEpisodes(episodes) {
   recordingsContainer.querySelectorAll('.btn-copy-url').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const url = btn.getAttribute('data-url');
-      await navigator.clipboard.writeText(url);
-      const originalText = btn.textContent;
-      btn.textContent = '✓ Copied';
-      setTimeout(() => (btn.textContent = originalText), 1500);
+      try {
+        await navigator.clipboard.writeText(url);
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        setTimeout(() => (btn.innerHTML = originalText), 1500);
+      } catch (err) {
+        console.error('Failed to copy', err);
+      }
+    });
+  });
+
+  // Attach single-episode M3U download listeners
+  recordingsContainer.querySelectorAll('.btn-download-m3u').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const chNum = btn.getAttribute('data-num');
+      const name = btn.getAttribute('data-name') || 'Recording';
+      const url = btn.getAttribute('data-url');
+      const m3uContent = `#EXTM3U\n#EXTINF:-1 tvg-id="${chNum}" tvg-name="${name}",${name}\n${url}\n`;
+      const blob = new Blob([m3uContent], { type: 'audio/x-mpegurl;charset=utf-8' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      const cleanName = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      a.download = `${cleanName}.m3u`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(downloadUrl);
     });
   });
 }
