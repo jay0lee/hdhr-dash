@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.29';
+const APP_VERSION = '2.0.30';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -856,6 +856,15 @@ async function fetchTuners() {
   }
 }
 
+function formatTunerName(rawName) {
+  if (!rawName) return 'Tuner';
+  const match = String(rawName).match(/^tuner(\d+)$/i);
+  if (match) {
+    return `Tuner ${match[1]}`;
+  }
+  return String(rawName).charAt(0).toUpperCase() + String(rawName).slice(1);
+}
+
 function renderTuners(statusItems) {
   if (!Array.isArray(statusItems) || statusItems.length === 0) {
     tunersGrid.innerHTML = '<div class="loading-placeholder">No tuners reported by device.</div>';
@@ -882,7 +891,7 @@ function renderTuners(statusItems) {
     const card = document.createElement('div');
     card.className = `tuner-card ${isActive ? 'active' : ''} clickable-tuner-card`;
     card.setAttribute('data-tuner-id', tunerName);
-    card.setAttribute('title', `Click to view real-time diagnostics & signal graph for ${tunerName.toUpperCase()}`);
+    card.setAttribute('title', `Click to view real-time diagnostics & signal graph for ${formatTunerName(tunerName)}`);
 
     let detailsHtml = '';
     let sharedBadge = '';
@@ -1012,7 +1021,7 @@ function renderTuners(statusItems) {
       <div class="tuner-card-header">
         <span class="tuner-name">
           <span class="status-dot ${dotClass}"></span>
-          ${tunerName.toUpperCase()}
+          ${formatTunerName(tunerName)}
           ${sharedBadge || ''}
         </span>
         <span class="tuner-status-badge ${statusClass}">${statusText}</span>
@@ -1233,7 +1242,7 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
   const isActive = Boolean(tuner.VctNumber || (tuner.TargetIP && tuner.TargetIP !== 'none'));
 
   // Title
-  detailTunerName.textContent = (tuner.Resource || tunerId).toUpperCase();
+  detailTunerName.textContent = formatTunerName(tuner.Resource || tunerId);
 
   // Find all client sessions sharing this tuner
   const clientSessions = [];
