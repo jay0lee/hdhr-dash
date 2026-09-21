@@ -1,11 +1,15 @@
-const CACHE_NAME = 'hdhr-dash-v14';
+const CACHE_NAME = 'hdhr-dash-v15';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.0.11',
-  './app.js?v=2.0.11',
+  './style.css?v=2.0.12',
+  './app.js?v=2.0.12',
   './manifest.json',
-  './icon.svg'
+  './icon.svg',
+  './favicon.ico',
+  './apple-touch-icon.png',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {

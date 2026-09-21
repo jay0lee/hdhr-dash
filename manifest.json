@@ -1,17 +1,35 @@
 {
-  "name": "HDHomeRun Monitor",
+  "name": "HDHomeRun Dashboard",
   "short_name": "HDHR Dash",
-  "description": "Minimal PWA to monitor and interact with HDHomeRun recorders on local LAN",
+  "description": "Monitor and interact with HDHomeRun tuners and DVR recordings on your local LAN",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#1e293b",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120",
   "icons": [
     {
       "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
