@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.17" />
+  <link rel="stylesheet" href="style.css?v=2.0.18" />
 </head>
 <body>
   <div class="app-shell">
@@ -310,11 +310,50 @@
               </button>
             </div>
           </div>
+
+          <!-- Preferences Card -->
+          <div class="card">
+            <h3>Preferences</h3>
+            <p class="text-sm text-muted mb-12">Configure application and recording options.</p>
+            <div class="pref-row">
+              <div class="pref-info">
+                <strong>Confirm Recording Deletions</strong>
+                <p class="text-sm text-muted">Show a confirmation prompt before permanently deleting recordings or series.</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="pref-confirm-delete" checked />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <script src="app.js?v=2.0.17"></script>
+  <!-- Confirm Deletion Modal -->
+  <div id="modal-confirm-delete" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-delete-title">⚠️ Confirm Deletion</h3>
+        <button id="modal-close-btn" class="modal-close-icon">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-delete-msg">Are you sure you want to delete this recording?</p>
+        <div class="modal-checkbox-row mt-12">
+          <label class="checkbox-label">
+            <input type="checkbox" id="confirm-delete-dont-ask" />
+            <span>Don't ask me again</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-delete" class="btn btn-secondary">Cancel</button>
+        <button id="btn-proceed-delete" class="btn btn-danger">🗑️ Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=2.0.18"></script>
 </body>
 </html>

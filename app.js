@@ -5,6 +5,7 @@
 const STORAGE_ACTIVE_IP = 'hdhr_active_ip';
 const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
+const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const DEFAULT_IP = '10.1.0.4';
 
 // Immediately apply saved theme to documentElement to avoid flash
@@ -74,9 +75,10 @@ const btnRecheckDvr = document.getElementById('btn-recheck-dvr');
 const dvrStorageBarCard = document.getElementById('dvr-storage-bar-card');
 const storageSpaceText = document.getElementById('storage-space-text');
 const storageBarFill = document.getElementById('storage-bar-fill');
+const dvrFilterBar = document.getElementById('dvr-filter-bar');
 const dvrViewPills = document.querySelectorAll('#dvr-view-pills .pill');
-const episodesCountPill = document.getElementById('episodes-count-pill');
 const seriesCountPill = document.getElementById('series-count-pill');
+const episodesCountPill = document.getElementById('episodes-count-pill');
 const rulesCountPill = document.getElementById('rules-count-pill');
 
 // System Elements
@@ -90,6 +92,16 @@ const discoveredDevicesList = document.getElementById('discovered-devices-list')
 const inputCustomIp = document.getElementById('input-custom-ip');
 const btnAddDevice = document.getElementById('btn-add-device');
 const btnRediscover = document.getElementById('btn-rediscover');
+const prefConfirmDelete = document.getElementById('pref-confirm-delete');
+
+// Confirm Delete Modal Elements
+const modalConfirmDelete = document.getElementById('modal-confirm-delete');
+const modalDeleteTitle = document.getElementById('modal-delete-title');
+const confirmDeleteMsg = document.getElementById('confirm-delete-msg');
+const confirmDeleteDontAsk = document.getElementById('confirm-delete-dont-ask');
+const btnCancelDelete = document.getElementById('btn-cancel-delete');
+const btnProceedDelete = document.getElementById('btn-proceed-delete');
+const modalCloseBtn = document.getElementById('modal-close-btn');
 
 /* ==========================================================================
    Initialization
@@ -102,6 +114,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupLineupFilters();
   setupDvrPills();
   setupDeviceManagement();
+  setupDeleteModal();
   setupPwa();
 
   // Populate device dropdown
@@ -1134,6 +1147,11 @@ function renderEpisodes(episodes) {
             📺 Stream (M3U)
           </button>
         ` : ''}
+        ${ep.CmdURL ? `
+          <button class="btn btn-sm btn-delete btn-delete-recording" data-cmd-url="${ep.CmdURL}" title="Delete this recording permanently from storage">
+            🗑️ Delete
+          </button>
+        ` : ''}
       </div>
     `;
 
@@ -1172,6 +1190,28 @@ function renderEpisodes(episodes) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(downloadUrl);
+    });
+  });
+
+  // Attach delete recording listeners
+  recordingsContainer.querySelectorAll('.btn-delete-recording').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const cmdUrl = btn.getAttribute('data-cmd-url');
+      const ep = state.episodes.find((e) => e.CmdURL === cmdUrl);
+      if (!ep) return;
+
+      const title = ep.EpisodeTitle ? `${ep.Title}: ${ep.EpisodeTitle}` : (ep.Title || 'this recording');
+      const needConfirm = localStorage.getItem(STORAGE_CONFIRM_DELETE) !== 'false';
+
+      if (needConfirm) {
+        showDeleteConfirmModal({
+          title: 'Delete Recording',
+          message: `Are you sure you want to permanently delete "${title}"? This cannot be undone and will remove the file from your storage drive.`,
+          onConfirm: () => deleteEpisode(ep),
+        });
+      } else {
+        deleteEpisode(ep);
+      }
     });
   });
 }
@@ -1218,6 +1258,11 @@ function renderSeries(seriesList) {
         <button class="btn btn-sm btn-secondary btn-view-series-episodes" data-series-id="${s.SeriesID}">
           View Episodes (${matchCount})
         </button>
+        ${matchCount > 0 ? `
+          <button class="btn btn-sm btn-delete btn-delete-series" data-series-id="${s.SeriesID}" title="Delete all recordings for this series permanently">
+            🗑️ Delete Series
+          </button>
+        ` : ''}
       </div>
     `;
 
@@ -1231,6 +1276,27 @@ function renderSeries(seriesList) {
       dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'episodes'));
       state.dvrSubView = 'episodes';
       renderEpisodes(filtered);
+    });
+  });
+
+  recordingsContainer.querySelectorAll('.btn-delete-series').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const sId = btn.getAttribute('data-series-id');
+      const s = seriesList.find((item) => item.SeriesID === sId);
+      const matching = state.episodes.filter((ep) => ep.SeriesID === sId);
+      if (!s || matching.length === 0) return;
+
+      const needConfirm = localStorage.getItem(STORAGE_CONFIRM_DELETE) !== 'false';
+
+      if (needConfirm) {
+        showDeleteConfirmModal({
+          title: 'Delete Series Recordings',
+          message: `Are you sure you want to permanently delete all ${matching.length} recorded episode(s) of "${s.Title || 'Series'}"? This cannot be undone and will remove the files from your storage drive.`,
+          onConfirm: () => deleteSeries(s, matching),
+        });
+      } else {
+        deleteSeries(s, matching);
+      }
     });
   });
 }
@@ -1287,6 +1353,111 @@ btnRefreshRecordings.addEventListener('click', fetchRecordings);
 btnRecheckDvr.addEventListener('click', fetchRecordings);
 
 /* ==========================================================================
+   Recording Management (Delete Operations)
+   ========================================================================== */
+
+async function deleteEpisode(ep) {
+  if (!ep || !ep.CmdURL) {
+    showAlert('Unable to delete: No CmdURL provided for this recording.', 'error');
+    return;
+  }
+
+  const deleteUrl = ep.CmdURL + (ep.CmdURL.includes('?') ? '&' : '?') + 'cmd=delete&rerecord=0';
+  try {
+    const res = await fetch(deleteUrl, { method: 'POST' });
+    if (!res.ok) {
+      throw new Error(`Device returned HTTP ${res.status}`);
+    }
+    showToast(`Deleted "${ep.Title || 'Recording'}"`);
+    state.episodes = state.episodes.filter((e) => e.CmdURL !== ep.CmdURL && e.PlayURL !== ep.PlayURL);
+    episodesCountPill.textContent = state.episodes.length;
+    recordingsCountBadge.textContent = state.episodes.length;
+    renderCurrentDvrSubView();
+    // Refresh storage bar and list in background
+    setTimeout(fetchRecordings, 1200);
+  } catch (err) {
+    console.error('Delete error:', err);
+    showAlert(`Failed to delete recording: ${err.message}`, 'error');
+  }
+}
+
+async function deleteSeries(series, matchingEpisodes) {
+  if (!matchingEpisodes || matchingEpisodes.length === 0) {
+    showAlert('No episodes found to delete for this series.', 'error');
+    return;
+  }
+
+  showToast(`Deleting ${matchingEpisodes.length} episode(s)...`);
+  let deletedCount = 0;
+  for (const ep of matchingEpisodes) {
+    if (ep.CmdURL) {
+      try {
+        const deleteUrl = ep.CmdURL + (ep.CmdURL.includes('?') ? '&' : '?') + 'cmd=delete&rerecord=0';
+        const res = await fetch(deleteUrl, { method: 'POST' });
+        if (res.ok) deletedCount++;
+      } catch (e) {
+        console.warn('Failed to delete episode', ep.Title, e);
+      }
+    }
+  }
+
+  showToast(`Deleted ${deletedCount} episode(s) of "${series.Title || 'Series'}"`);
+  setTimeout(fetchRecordings, 1000);
+}
+
+/* ==========================================================================
+   Delete Confirmation Modal & Preferences
+   ========================================================================== */
+
+let currentDeleteCallback = null;
+
+function showDeleteConfirmModal({ title, message, onConfirm }) {
+  if (modalDeleteTitle) modalDeleteTitle.textContent = title || '⚠️ Confirm Deletion';
+  if (confirmDeleteMsg) confirmDeleteMsg.textContent = message || 'Are you sure you want to delete this recording?';
+  if (confirmDeleteDontAsk) confirmDeleteDontAsk.checked = false;
+  currentDeleteCallback = onConfirm;
+  if (modalConfirmDelete) modalConfirmDelete.classList.remove('hidden');
+}
+
+function hideDeleteConfirmModal() {
+  if (modalConfirmDelete) modalConfirmDelete.classList.add('hidden');
+  currentDeleteCallback = null;
+}
+
+function setupDeleteModal() {
+  if (btnCancelDelete) {
+    btnCancelDelete.addEventListener('click', hideDeleteConfirmModal);
+  }
+  if (modalCloseBtn) {
+    modalCloseBtn.addEventListener('click', hideDeleteConfirmModal);
+  }
+  if (modalConfirmDelete) {
+    modalConfirmDelete.addEventListener('click', (e) => {
+      if (e.target === modalConfirmDelete) hideDeleteConfirmModal();
+    });
+  }
+  if (btnProceedDelete) {
+    btnProceedDelete.addEventListener('click', async () => {
+      if (confirmDeleteDontAsk && confirmDeleteDontAsk.checked) {
+        localStorage.setItem(STORAGE_CONFIRM_DELETE, 'false');
+        if (prefConfirmDelete) prefConfirmDelete.checked = false;
+      }
+      const cb = currentDeleteCallback;
+      hideDeleteConfirmModal();
+      if (cb) await cb();
+    });
+  }
+
+  if (prefConfirmDelete) {
+    const isConfirm = localStorage.getItem(STORAGE_CONFIRM_DELETE) !== 'false';
+    prefConfirmDelete.checked = isConfirm;
+    prefConfirmDelete.addEventListener('change', (e) => {
+      localStorage.setItem(STORAGE_CONFIRM_DELETE, e.target.checked ? 'true' : 'false');
+    });
+  }
+}
+
+/* ==========================================================================
    Alerts & Utilities
    ========================================================================== */
 
@@ -1298,6 +1469,22 @@ function showAlert(html, type = 'info') {
 
 function hideAlert() {
   globalAlert.classList.add('hidden');
+}
+
+function showToast(msg) {
+  let toast = document.getElementById('app-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'app-toast';
+    toast.className = 'app-toast';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.classList.add('visible');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.classList.remove('visible');
+  }, 2500);
 }
 
 /* ==========================================================================

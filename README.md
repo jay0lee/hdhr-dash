@@ -63,6 +63,7 @@ View device hardware details, check firmware update status against SiliconDust r
   * Visual storage space bar (`Free GB` vs `Total GB` and % used).
   * **Series & Episodes Views:** Browse grouped series cards or drill down into individual episodes with season/episode numbers, original airdates, broadcast poster artwork, synopses, and station details.
   * **Direct Video Downloads:** Direct `⬇️ Download (.mpg)` button for every recorded file to save full raw video files directly to your device.
+  * **Recording Deletion & Management:** Delete individual recorded files or entire series directly from connected storage via HDHomeRun DVR API `CmdURL` POST commands, with confirmation prompts and a "Don't ask again" option.
   * **Scheduled Rules:** Integrates with SiliconDust's Cloud DVR API (`api.hdhomerun.com/api/recording_rules`) using `DeviceAuth` to show active series recording rules with priority, team/channel filters, and padding.
 
 * **🎨 Theme Customization:**
