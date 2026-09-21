@@ -331,17 +331,25 @@ async function fetchTuners() {
   }
 }
 
-function renderTuners(tuners) {
-  if (!Array.isArray(tuners) || tuners.length === 0) {
+function renderTuners(statusItems) {
+  if (!Array.isArray(statusItems) || statusItems.length === 0) {
     tunersGrid.innerHTML = '<div class="loading-placeholder">No tuners reported by device.</div>';
     return;
   }
 
+  // Separate physical tuners (tuner0, tuner1...) from outgoing live streaming sessions
+  const physicalTuners = statusItems.filter((item) =>
+    item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+  );
+  const liveSessions = statusItems.filter((item) =>
+    !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
+  );
+
   let activeCount = 0;
   tunersGrid.innerHTML = '';
 
-  tuners.forEach((tuner, index) => {
-    const isActive = Boolean(tuner.VctNumber || tuner.TargetIP);
+  physicalTuners.forEach((tuner, index) => {
+    const isActive = Boolean(tuner.VctNumber || (tuner.TargetIP && tuner.TargetIP !== 'none'));
     if (isActive) activeCount++;
 
     const card = document.createElement('div');
@@ -358,6 +366,26 @@ function renderTuners(tuners) {
       const quality = tuner.SignalQualityPercent ?? 0;
       const symbol = tuner.SymbolQualityPercent ?? 0;
 
+      // Find real client IP if proxied through [::1]
+      let clientIp = tuner.TargetIP;
+      if (clientIp === '[::1]' || clientIp === '::1' || clientIp === '127.0.0.1') {
+        const matchingSession = liveSessions.find((s) => {
+          if (!s.Name) return false;
+          return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
+        });
+        if (matchingSession && matchingSession.TargetIP) {
+          clientIp = matchingSession.TargetIP;
+        }
+      }
+
+      // Network bitrate
+      let rateDisplay = '';
+      if (tuner.NetworkRate) {
+        rateDisplay = `<span>Rate: <strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong></span>`;
+      } else if (tuner.Frequency) {
+        rateDisplay = `<span>Freq: ${(tuner.Frequency / 1000000).toFixed(3)} MHz</span>`;
+      }
+
       detailsHtml = `
         <div class="tuner-active-info">
           <div class="tuner-channel-row">
@@ -365,8 +393,8 @@ function renderTuners(tuners) {
             <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
           </div>
           <div class="tuner-meta-row">
-            <span>Client: <code>${tuner.TargetIP || 'Local'}</code></span>
-            <span>Freq: ${tuner.Frequency ? (tuner.Frequency / 1000000).toFixed(3) + ' MHz' : '—'}</span>
+            <span>Client: <code>${clientIp || 'Local'}</code></span>
+            ${rateDisplay}
           </div>
         </div>
 
@@ -398,7 +426,7 @@ function renderTuners(tuners) {
     tunersGrid.appendChild(card);
   });
 
-  tunerSummaryBadge.textContent = `${activeCount} / ${tuners.length} Active`;
+  tunerSummaryBadge.textContent = `${activeCount} / ${physicalTuners.length} Active`;
   tunerSummaryBadge.className = `badge ${activeCount > 0 ? 'badge-hd' : ''}`;
 }
 
