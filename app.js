@@ -360,7 +360,12 @@ async function refreshActiveTab() {
       await fetchTuners();
       break;
     case 'lineup':
-      if (state.lineup.length === 0) await fetchLineup();
+      if (state.lineup.length === 0) {
+        await fetchLineup();
+      } else {
+        updateLineupStats();
+        renderLineup();
+      }
       break;
     case 'recordings':
       await fetchRecordings();
@@ -670,8 +675,7 @@ function renderChannelsCount(allowed, total) {
 
 async function loadChannelsCount() {
   if (state.lineup && state.lineup.length > 0) {
-    const allowed = state.lineup.filter((ch) => ch.Enabled !== 0).length;
-    renderChannelsCount(allowed, state.lineup.length);
+    updateLineupStats();
     return;
   }
 
@@ -682,8 +686,10 @@ async function loadChannelsCount() {
       const lineup = await res.json();
       if (Array.isArray(lineup)) {
         state.lineup = lineup;
-        const allowed = lineup.filter((ch) => ch.Enabled !== 0).length;
-        renderChannelsCount(allowed, lineup.length);
+        updateLineupStats();
+        if (state.activeTab === 'lineup') {
+          renderLineup();
+        }
       }
     }
   } catch (e) {
@@ -1614,6 +1620,32 @@ function isAtsc3Channel(ch) {
   );
 }
 
+function updateLineupStats() {
+  if (!Array.isArray(state.lineup)) return;
+
+  const allowedChannels = state.lineup.filter((ch) => ch.Enabled !== 0);
+  const hiddenChannels = state.lineup.filter((ch) => ch.Enabled === 0);
+  const favChannels = state.lineup.filter((ch) => ch.Favorite === 1);
+  const atsc3Channels = state.lineup.filter((ch) => isAtsc3Channel(ch));
+  const drmChannels = state.lineup.filter((ch) => ch.DRM === 1);
+  const hdChannels = state.lineup.filter((ch) => ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')));
+
+  if (lineupAllowedPill) lineupAllowedPill.textContent = allowedChannels.length;
+  if (lineupAllPill) lineupAllPill.textContent = state.lineup.length;
+  if (lineupFavPill) lineupFavPill.textContent = favChannels.length;
+  if (lineupAtsc3Pill) lineupAtsc3Pill.textContent = atsc3Channels.length;
+  if (lineupDrmPill) lineupDrmPill.textContent = drmChannels.length;
+  if (lineupHdPill) lineupHdPill.textContent = hdChannels.length;
+  if (lineupHiddenPill) lineupHiddenPill.textContent = hiddenChannels.length;
+
+  if (lineupCountBadge) {
+    lineupCountBadge.textContent = allowedChannels.length;
+    lineupCountBadge.classList.remove('hidden');
+  }
+
+  renderChannelsCount(allowedChannels.length, state.lineup.length);
+}
+
 async function fetchLineup() {
   const ip = state.currentIp;
   lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
@@ -1625,26 +1657,7 @@ async function fetchLineup() {
     const lineup = await res.json();
     state.lineup = Array.isArray(lineup) ? lineup : [];
 
-    // Update count pill badges
-    const allowedChannels = state.lineup.filter((ch) => ch.Enabled !== 0);
-    const hiddenChannels = state.lineup.filter((ch) => ch.Enabled === 0);
-    const favChannels = state.lineup.filter((ch) => ch.Favorite === 1);
-    const atsc3Channels = state.lineup.filter((ch) => isAtsc3Channel(ch));
-    const drmChannels = state.lineup.filter((ch) => ch.DRM === 1);
-    const hdChannels = state.lineup.filter((ch) => ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')));
-
-    lineupAllowedPill.textContent = allowedChannels.length;
-    lineupAllPill.textContent = state.lineup.length;
-    lineupFavPill.textContent = favChannels.length;
-    lineupAtsc3Pill.textContent = atsc3Channels.length;
-    lineupDrmPill.textContent = drmChannels.length;
-    lineupHdPill.textContent = hdChannels.length;
-    lineupHiddenPill.textContent = hiddenChannels.length;
-
-    lineupCountBadge.textContent = allowedChannels.length;
-    lineupCountBadge.classList.remove('hidden');
-
-    renderChannelsCount(allowedChannels.length, state.lineup.length);
+    updateLineupStats();
     renderLineup();
   } catch (err) {
     console.warn('Error fetching lineup:', err);
