@@ -627,8 +627,52 @@ body {
   opacity: 0.5;
 }
 
-.lineup-row-disabled:hover td {
-  opacity: 0.85;
+.badge-atsc3 {
+  background-color: rgba(168, 85, 247, 0.2);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  font-weight: 600;
+}
+
+.badge-drm {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  font-weight: 600;
+}
+
+.signal-meter-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 85px;
+}
+
+.signal-mini-bar {
+  width: 44px;
+  height: 6px;
+  background-color: #0b1120;
+  border-radius: 9999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.signal-mini-fill {
+  height: 100%;
+  border-radius: 9999px;
+}
+
+.signal-value-text {
+  font-size: 0.78rem;
+  font-family: monospace;
+  color: var(--text-secondary);
+}
+
+.btn-drm-locked {
+  opacity: 0.6;
+  cursor: not-allowed !important;
+  background-color: #334155 !important;
+  color: #94a3b8 !important;
 }
 
 .table-actions {

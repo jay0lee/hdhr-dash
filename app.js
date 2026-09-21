@@ -50,6 +50,8 @@ const lineupFilterPills = document.querySelectorAll('#lineup-filter-pills .pill'
 const lineupAllowedPill = document.getElementById('lineup-allowed-pill');
 const lineupAllPill = document.getElementById('lineup-all-pill');
 const lineupFavPill = document.getElementById('lineup-fav-pill');
+const lineupAtsc3Pill = document.getElementById('lineup-atsc3-pill');
+const lineupDrmPill = document.getElementById('lineup-drm-pill');
 const lineupHdPill = document.getElementById('lineup-hd-pill');
 const lineupHiddenPill = document.getElementById('lineup-hidden-pill');
 const lineupTbody = document.getElementById('lineup-tbody');
@@ -530,9 +532,17 @@ function stopPolling() {
    Channel Lineup
    ========================================================================== */
 
+function isAtsc3Channel(ch) {
+  return (
+    ch.VideoCodec === 'HEVC' ||
+    ch.AudioCodec === 'AC4' ||
+    (ch.GuideNumber && parseFloat(ch.GuideNumber) >= 100)
+  );
+}
+
 async function fetchLineup() {
   const ip = state.currentIp;
-  lineupTbody.innerHTML = '<tr><td colspan="4" class="empty-state">Loading channels...</td></tr>';
+  lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
 
   try {
     // Query with show=found to get all discovered channels including hidden/disabled ones
@@ -545,11 +555,15 @@ async function fetchLineup() {
     const allowedChannels = state.lineup.filter((ch) => ch.Enabled !== 0);
     const hiddenChannels = state.lineup.filter((ch) => ch.Enabled === 0);
     const favChannels = state.lineup.filter((ch) => ch.Favorite === 1);
+    const atsc3Channels = state.lineup.filter((ch) => isAtsc3Channel(ch));
+    const drmChannels = state.lineup.filter((ch) => ch.DRM === 1);
     const hdChannels = state.lineup.filter((ch) => ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')));
 
     lineupAllowedPill.textContent = allowedChannels.length;
     lineupAllPill.textContent = state.lineup.length;
     lineupFavPill.textContent = favChannels.length;
+    lineupAtsc3Pill.textContent = atsc3Channels.length;
+    lineupDrmPill.textContent = drmChannels.length;
     lineupHdPill.textContent = hdChannels.length;
     lineupHiddenPill.textContent = hiddenChannels.length;
 
@@ -559,7 +573,7 @@ async function fetchLineup() {
     renderLineup();
   } catch (err) {
     console.warn('Error fetching lineup:', err);
-    lineupTbody.innerHTML = `<tr><td colspan="4" class="empty-state error">Failed to load lineup from ${ip}.</td></tr>`;
+    lineupTbody.innerHTML = `<tr><td colspan="5" class="empty-state error">Failed to load lineup from ${ip}.</td></tr>`;
   }
 }
 
@@ -599,6 +613,12 @@ function renderLineup() {
     if (state.filterType === 'favorites') {
       return ch.Favorite === 1;
     }
+    if (state.filterType === 'atsc3') {
+      return isAtsc3Channel(ch);
+    }
+    if (state.filterType === 'drm') {
+      return ch.DRM === 1;
+    }
     if (state.filterType === 'hd') {
       return ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD'));
     }
@@ -609,7 +629,7 @@ function renderLineup() {
   });
 
   if (filtered.length === 0) {
-    lineupTbody.innerHTML = '<tr><td colspan="4" class="empty-state">No matching channels found.</td></tr>';
+    lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No matching channels found.</td></tr>';
     return;
   }
 
@@ -619,6 +639,8 @@ function renderLineup() {
     const isHd = ch.HD === 1;
     const isHidden = ch.Enabled === 0;
     const isFav = ch.Favorite === 1;
+    const isAtsc3 = isAtsc3Channel(ch);
+    const isDrm = ch.DRM === 1;
     const streamUrl = ch.URL || `http://${state.currentIp}:5004/auto/v${ch.GuideNumber}`;
 
     if (isHidden) {
@@ -634,21 +656,66 @@ function renderLineup() {
       statusBadge = '<span class="badge">Allowed</span>';
     }
 
+    const atscBadge = isAtsc3
+      ? '<span class="badge badge-atsc3" title="ATSC 3.0 (NextGen TV)">ATSC 3.0</span>'
+      : '<span class="badge" title="ATSC 1.0 (Standard Digital)">ATSC 1.0</span>';
+
+    const drmBadge = isDrm
+      ? '<span class="badge badge-drm" title="Encrypted with ATSC 3.0 DRM">🔒 DRM</span>'
+      : '';
+
+    // Signal Quality meter
+    let signalHtml = '<span class="text-muted">—</span>';
+    if (ch.SignalQuality != null || ch.SignalStrength != null) {
+      const sq = ch.SignalQuality ?? ch.SignalStrength;
+      const ss = ch.SignalStrength;
+      let gradeClass = 'poor';
+      if (sq >= 80) gradeClass = 'good';
+      else if (sq >= 60) gradeClass = 'fair';
+
+      const tooltip = `Signal Quality: ${ch.SignalQuality ?? '—'}%${ss != null ? ` | Strength: ${ss}%` : ''}`;
+      signalHtml = `
+        <div class="signal-meter-wrapper" title="${tooltip}">
+          <div class="signal-mini-bar">
+            <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
+          </div>
+          <span class="signal-value-text">${sq}%</span>
+        </div>
+      `;
+    }
+
+    // Play action
+    let playAction = `
+      <a href="${streamUrl}" target="_blank" class="btn btn-sm btn-primary" title="Stream in Browser/VLC">
+        ▶ Play
+      </a>
+    `;
+    if (isDrm) {
+      playAction = `
+        <button class="btn btn-sm btn-drm-locked" title="DRM Protected: Playable only via official HDHomeRun app with DRM license">
+          🔒 DRM
+        </button>
+      `;
+    }
+
     tr.innerHTML = `
       <td class="channel-num-cell">${ch.GuideNumber}</td>
       <td class="channel-name-cell">
         ${ch.GuideName || 'Unknown'}
       </td>
       <td>
-        <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
           ${statusBadge}
+          ${atscBadge}
           ${isHd ? '<span class="badge badge-hd">HD</span>' : '<span class="badge">SD</span>'}
+          ${drmBadge}
         </div>
       </td>
+      <td>
+        ${signalHtml}
+      </td>
       <td class="table-actions">
-        <a href="${streamUrl}" target="_blank" class="btn btn-sm btn-primary" title="Stream in Browser/VLC">
-          ▶ Play
-        </a>
+        ${playAction}
         <button class="btn btn-sm btn-secondary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL">
           📋
         </button>

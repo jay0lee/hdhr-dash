@@ -12,7 +12,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.5" />
+  <link rel="stylesheet" href="style.css?v=2.0.6" />
 </head>
 <body>
   <div class="app-shell">
@@ -126,6 +126,12 @@
             <button class="pill" data-filter="favorites">
               Favorites ⭐ <span id="lineup-fav-pill" class="badge-pill">0</span>
             </button>
+            <button class="pill" data-filter="atsc3">
+              ATSC 3.0 <span id="lineup-atsc3-pill" class="badge-pill">0</span>
+            </button>
+            <button class="pill" data-filter="drm">
+              DRM 🔒 <span id="lineup-drm-pill" class="badge-pill">0</span>
+            </button>
             <button class="pill" data-filter="hd">
               HD Only <span id="lineup-hd-pill" class="badge-pill">0</span>
             </button>
@@ -141,13 +147,14 @@
               <tr>
                 <th>Channel</th>
                 <th>Station</th>
-                <th>Type</th>
+                <th>Format & Badges</th>
+                <th>Signal</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody id="lineup-tbody">
               <tr>
-                <td colspan="4" class="empty-state">Loading channel lineup...</td>
+                <td colspan="5" class="empty-state">Loading channel lineup...</td>
               </tr>
             </tbody>
           </table>
@@ -257,6 +264,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=2.0.5"></script>
+  <script src="app.js?v=2.0.6"></script>
 </body>
 </html>
