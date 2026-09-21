@@ -1,9 +1,9 @@
-const CACHE_NAME = 'hdhr-dash-v29';
+const CACHE_NAME = 'hdhr-dash-v30';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.0.26',
-  './app.js?v=2.0.26',
+  './style.css?v=2.0.27',
+  './app.js?v=2.0.27',
   './manifest.json',
   './icon.svg',
   './favicon.ico',

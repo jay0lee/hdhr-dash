@@ -869,12 +869,12 @@ function renderTuners(statusItems) {
     const isActive = Boolean(tuner.VctNumber || (tuner.TargetIP && tuner.TargetIP !== 'none'));
     if (isActive) activeCount++;
 
+    const tunerName = tuner.Resource || `tuner${index}`;
+
     const card = document.createElement('div');
     card.className = `tuner-card ${isActive ? 'active' : ''} clickable-tuner-card`;
     card.setAttribute('data-tuner-id', tunerName);
     card.setAttribute('title', `Click to view real-time diagnostics & signal graph for ${tunerName.toUpperCase()}`);
-
-    const tunerName = tuner.Resource || `tuner${index}`;
 
     let detailsHtml = '';
     let sharedBadge = '';
