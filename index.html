@@ -12,7 +12,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.7" />
+  <link rel="stylesheet" href="style.css?v=2.0.8" />
 </head>
 <body>
   <div class="app-shell">
@@ -40,6 +40,16 @@
       </div>
 
       <div class="header-right">
+        <div class="theme-selector-wrapper">
+          <select id="theme-select" title="Theme">
+            <option value="dark">🌙 Dark</option>
+            <option value="light">☀️ Light</option>
+            <option value="oled">🖤 OLED</option>
+            <option value="teal">🌊 Teal</option>
+            <option value="nord">❄️ Nord</option>
+          </select>
+        </div>
+
         <div class="poll-control">
           <button id="btn-toggle-poll" class="btn btn-icon" title="Pause / Resume Live Polling">
             <span class="live-dot pulse"></span>
@@ -259,11 +269,38 @@
               </button>
             </div>
           </div>
+          <!-- Theme & Appearance Card -->
+          <div class="card">
+            <h3>Theme & Appearance</h3>
+            <p class="text-sm text-muted mb-12">Choose your preferred visual theme and color scheme.</p>
+            <div class="theme-options-grid">
+              <button class="theme-btn" data-theme-val="dark">
+                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #0b1120 50%, #1e293b 50%); border: 1px solid #38bdf8;"></span>
+                <span class="theme-btn-label">🌙 Dark (Default)</span>
+              </button>
+              <button class="theme-btn" data-theme-val="light">
+                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #f1f5f9 50%, #ffffff 50%); border: 1px solid #0284c7;"></span>
+                <span class="theme-btn-label">☀️ Light</span>
+              </button>
+              <button class="theme-btn" data-theme-val="oled">
+                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #000000 50%, #111111 50%); border: 1px solid #38bdf8;"></span>
+                <span class="theme-btn-label">🖤 OLED Black</span>
+              </button>
+              <button class="theme-btn" data-theme-val="teal">
+                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #041b1d 50%, #082f32 50%); border: 1px solid #2dd4bf;"></span>
+                <span class="theme-btn-label">🌊 Teal (HDHR)</span>
+              </button>
+              <button class="theme-btn" data-theme-val="nord">
+                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #242933 50%, #2e3440 50%); border: 1px solid #88c0d0;"></span>
+                <span class="theme-btn-label">❄️ Nord Frost</span>
+              </button>
+            </div>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <script src="app.js?v=2.0.7"></script>
+  <script src="app.js?v=2.0.8"></script>
 </body>
 </html>

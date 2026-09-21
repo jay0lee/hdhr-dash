@@ -4,7 +4,12 @@
 
 const STORAGE_ACTIVE_IP = 'hdhr_active_ip';
 const STORAGE_DEVICES = 'hdhr_saved_devices';
+const STORAGE_THEME = 'hdhr_theme';
 const DEFAULT_IP = '10.1.0.4';
+
+// Immediately apply saved theme to documentElement to avoid flash
+const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
+document.documentElement.setAttribute('data-theme', initialTheme);
 
 // Application State
 const state = {
@@ -91,6 +96,7 @@ const btnRediscover = document.getElementById('btn-rediscover');
    ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  setupTheme();
   setupNavigation();
   setupPollingControls();
   setupLineupFilters();
@@ -111,6 +117,60 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Background Cloud Discovery
   discoverCloudDevices();
 });
+
+/* ==========================================================================
+   Theme Management
+   ========================================================================== */
+
+function setupTheme() {
+  const savedTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
+  applyTheme(savedTheme);
+
+  const themeSelect = document.getElementById('theme-select');
+  if (themeSelect) {
+    themeSelect.addEventListener('change', (e) => {
+      applyTheme(e.target.value);
+    });
+  }
+
+  const themeBtns = document.querySelectorAll('.theme-btn');
+  themeBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyTheme(btn.dataset.themeVal);
+    });
+  });
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem(STORAGE_THEME, theme);
+
+  const themeSelect = document.getElementById('theme-select');
+  if (themeSelect && themeSelect.value !== theme) {
+    themeSelect.value = theme;
+  }
+
+  const themeBtns = document.querySelectorAll('.theme-btn');
+  themeBtns.forEach((btn) => {
+    if (btn.dataset.themeVal === theme) {
+      btn.classList.add('active');
+    } else {
+      btn.classList.remove('active');
+    }
+  });
+
+  const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+  if (metaThemeColor) {
+    const themeColors = {
+      dark: '#0b1120',
+      light: '#f1f5f9',
+      oled: '#000000',
+      teal: '#041b1d',
+      nord: '#242933',
+    };
+    metaThemeColor.setAttribute('content', themeColors[theme] || '#0b1120');
+  }
+}
 
 /* ==========================================================================
    Navigation & Tabs
