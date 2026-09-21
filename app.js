@@ -8,6 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
+const APP_VERSION = '2.0.29';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -180,6 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDeviceManagement();
   setupDeleteModal();
   setupPwa();
+  renderAppInfo();
 
   // Populate device dropdown
   renderDeviceDropdown();
@@ -2562,5 +2564,22 @@ function setupPwa() {
 
   window.addEventListener('appinstalled', () => {
     btnInstall.classList.add('hidden');
+    renderAppInfo();
   });
+}
+
+function renderAppInfo() {
+  const infoAppVersion = document.getElementById('info-app-version');
+  const appVersionBadge = document.getElementById('app-version-badge');
+  const infoPwaMode = document.getElementById('info-pwa-mode');
+
+  if (infoAppVersion) infoAppVersion.textContent = `v${APP_VERSION}`;
+  if (appVersionBadge) appVersionBadge.textContent = `v${APP_VERSION}`;
+
+  if (infoPwaMode) {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    infoPwaMode.innerHTML = isStandalone
+      ? '<span class="badge badge-hd">Installed PWA</span>'
+      : '<span class="text-muted">Browser Tab</span>';
+  }
 }
