@@ -116,6 +116,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Background Cloud Discovery
   discoverCloudDevices();
+
+  // Setup Firmware Check button
+  const btnCheckFirmware = document.getElementById('btn-check-firmware');
+  if (btnCheckFirmware) {
+    btnCheckFirmware.addEventListener('click', async () => {
+      btnCheckFirmware.textContent = '⏳';
+      await loadDeviceDetails();
+      setTimeout(() => (btnCheckFirmware.textContent = '🔄 Check'), 600);
+    });
+  }
 });
 
 /* ==========================================================================
@@ -289,10 +299,55 @@ async function loadDeviceDetails() {
       DeviceID: data.DeviceID,
       StorageURL: data.StorageURL,
     });
+
+    // Check for firmware updates
+    checkFirmwareUpdate(data);
   } catch (err) {
     console.warn('Could not load discover.json:', err);
     connectionDot.className = 'status-dot error';
     showAlert(`Unable to connect to HDHomeRun at <code>${ip}</code>. Check your network or permissions.`, 'error');
+  }
+}
+
+async function checkFirmwareUpdate(deviceData) {
+  const badge = document.getElementById('firmware-status-badge');
+  if (!badge) return;
+
+  badge.className = 'badge';
+  badge.textContent = 'Checking...';
+
+  const currentVersion = deviceData?.FirmwareVersion || state.deviceInfo?.FirmwareVersion;
+  const ip = state.currentIp;
+
+  // 1. Check local discover.json for UpgradeURL or UpgradeAvailable
+  let upgradeAvailable = !!(deviceData?.UpgradeURL || deviceData?.UpgradeAvailable);
+  let upgradeVersion = deviceData?.UpgradeAvailable || '';
+
+  // 2. Query cloud discovery to see if cloud service reports an update for this device
+  if (!upgradeAvailable) {
+    try {
+      const res = await fetch('https://ipv4-api.hdhomerun.com/discover');
+      if (res.ok) {
+        const list = await res.json();
+        const match = Array.isArray(list) && list.find((d) => d.DeviceID === deviceData?.DeviceID || d.LocalIP === ip);
+        if (match?.UpgradeURL || match?.UpgradeAvailable) {
+          upgradeAvailable = true;
+          upgradeVersion = match.UpgradeAvailable || '';
+        }
+      }
+    } catch (e) {
+      console.log('Cloud firmware check error:', e);
+    }
+  }
+
+  if (upgradeAvailable) {
+    badge.className = 'badge badge-update-available';
+    badge.textContent = upgradeVersion ? `Update: v${upgradeVersion}` : 'Update Available';
+    badge.title = 'A newer firmware is available. Click Open Device Web Admin to install.';
+  } else {
+    badge.className = 'badge badge-up-to-date';
+    badge.textContent = '✓ Up to date';
+    badge.title = `Firmware ${currentVersion || ''} is up to date`;
   }
 }
 

@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.12" />
+  <link rel="stylesheet" href="style.css?v=2.0.13" />
 </head>
 <body>
   <div class="app-shell">
@@ -238,7 +238,14 @@
             <div id="device-info-list" class="info-list">
               <div class="info-row"><span class="info-label">Model</span><span id="info-model" class="info-val">—</span></div>
               <div class="info-row"><span class="info-label">Device ID</span><span id="info-id" class="info-val font-mono">—</span></div>
-              <div class="info-row"><span class="info-label">Firmware</span><span id="info-firmware" class="info-val">—</span></div>
+              <div class="info-row">
+                <span class="info-label">Firmware</span>
+                <div class="info-val-group">
+                  <span id="info-firmware" class="info-val font-mono">—</span>
+                  <span id="firmware-status-badge" class="badge">Checking...</span>
+                  <button id="btn-check-firmware" class="btn btn-xs btn-secondary" title="Check for firmware updates">🔄 Check</button>
+                </div>
+              </div>
               <div class="info-row"><span class="info-label">Tuners</span><span id="info-tuners" class="info-val">—</span></div>
               <div class="info-row"><span class="info-label">IP Address</span><span id="info-ip" class="info-val font-mono">—</span></div>
               <div class="info-row"><span class="info-label">Storage URL</span><span id="info-storage" class="info-val font-mono">—</span></div>
@@ -247,6 +254,9 @@
               <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4'), '_blank')">
                 Open Device Web Admin ↗
               </button>
+              <a href="https://www.silicondust.com/support/downloads/firmware-changelog/" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">
+                Firmware Changelog ↗
+              </a>
             </div>
           </div>
 
@@ -305,6 +315,6 @@
     </main>
   </div>
 
-  <script src="app.js?v=2.0.12"></script>
+  <script src="app.js?v=2.0.13"></script>
 </body>
 </html>
