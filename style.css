@@ -1325,6 +1325,15 @@ body {
   gap: 8px;
   margin-top: 4px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-delete-series {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
 }
 
 /* Scheduled Rules */

@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.60';
+const APP_VERSION = '2.0.61';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -3364,8 +3364,8 @@ function renderSeries(seriesList) {
           View Episodes (${matchCount})
         </button>
         ${matchCount > 0 ? `
-          <button class="btn btn-sm btn-delete btn-delete-series" data-series-id="${s.SeriesID}" title="Delete all recordings for this series permanently">
-            🗑️ Delete Series
+          <button class="btn btn-sm btn-secondary btn-delete-series" data-series-id="${s.SeriesID}" title="Delete Series" aria-label="Delete Series">
+            🗑️
           </button>
         ` : ''}
       </div>
