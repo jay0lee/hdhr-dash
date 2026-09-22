@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.49" />
+  <link rel="stylesheet" href="style.css?v=2.0.50" />
 </head>
 <body>
   <div class="app-shell">
@@ -301,6 +301,22 @@
               📥 Export M3U
             </button>
             <button id="btn-refresh-lineup" class="btn btn-sm btn-secondary">↻ Refresh</button>
+          </div>
+        </div>
+
+        <!-- Notice when no channels have static scan signal data -->
+        <div id="lineup-signal-notice" class="channel-signal-notice card hidden mb-16">
+          <div class="signal-notice-content">
+            <div class="signal-notice-icon">ℹ️</div>
+            <div class="signal-notice-body">
+              <div class="signal-notice-title">No Scan Signal Data Available</div>
+              <p class="signal-notice-text text-sm">
+                Signal strength on the Channels tab is static from the device's last channel scan. To view real-time signal diagnostics, tune to a channel on the <a href="#tuners" class="status-link">Tuners tab ↗</a>.
+              </p>
+              <p class="signal-notice-subtext text-xs">
+                To populate channel signal strengths, perform a channel scan from the <a id="link-hdhr-web-lineup" href="#" target="_blank" rel="noopener noreferrer" class="status-link">HDHomeRun Channel Lineup Web Page ↗</a> or the official HDHomeRun app.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -601,13 +617,13 @@
           <div class="card">
             <div class="card-header-with-actions">
               <h3>About HDHR Dash</h3>
-              <span id="app-version-badge" class="badge badge-hd">v2.0.49</span>
+              <span id="app-version-badge" class="badge badge-hd">v2.0.50</span>
             </div>
             <p class="text-sm text-muted mb-12">Lightweight, zero-dependency web dashboard for SiliconDust HDHomeRun tuners.</p>
             <div class="info-list">
               <div class="info-row">
                 <span class="info-label">Application Version</span>
-                <span id="info-app-version" class="info-val font-mono">v2.0.49</span>
+                <span id="info-app-version" class="info-val font-mono">v2.0.50</span>
               </div>
               <div class="info-row">
                 <span class="info-label">PWA Mode</span>
@@ -657,6 +673,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.49"></script>
+  <script src="app.js?v=2.0.50"></script>
 </body>
 </html>

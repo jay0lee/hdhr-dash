@@ -896,6 +896,62 @@ body {
   gap: 6px;
 }
 
+/* Channel Signal Notice Card */
+.channel-signal-notice {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-left: 4px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+}
+
+.signal-notice-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.signal-notice-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.signal-notice-body {
+  flex: 1;
+}
+
+.signal-notice-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.signal-notice-text {
+  color: var(--text-muted);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.signal-notice-subtext {
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin: 6px 0 0 0;
+}
+
+.live-dot-mini {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 4px #10b981;
+  margin-left: 2px;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
 /* Recordings View */
 .storage-bar-header {
   display: flex;

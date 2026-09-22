@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.49';
+const APP_VERSION = '2.0.50';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -1930,6 +1930,48 @@ async function updateLineupLiveStatus() {
   }
 }
 
+function getLineupSignalHtml(ch, activeTuner) {
+  if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
+    const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
+    const ss = activeTuner.SignalStrengthPercent;
+    let gradeClass = 'poor';
+    if (sq >= 80) gradeClass = 'good';
+    else if (sq >= 60) gradeClass = 'fair';
+
+    const tunerLabel = formatTunerName(activeTuner.Resource);
+    const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
+    return `
+      <div class="signal-meter-wrapper" title="${tooltip}">
+        <span class="live-dot-mini" title="Active live stream/recording"></span>
+        <div class="signal-mini-bar">
+          <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
+        </div>
+        <span class="signal-mini-val">${sq}%</span>
+      </div>
+    `;
+  }
+
+  if (ch && (ch.SignalQuality != null || ch.SignalStrength != null)) {
+    const sq = ch.SignalQuality ?? ch.SignalStrength;
+    const ss = ch.SignalStrength;
+    let gradeClass = 'poor';
+    if (sq >= 80) gradeClass = 'good';
+    else if (sq >= 60) gradeClass = 'fair';
+
+    const tooltip = `Last Scan: ${sq}% Signal Quality${ss != null ? ` (${ss}% Strength)` : ''} • Static value from last channel scan`;
+    return `
+      <div class="signal-meter-wrapper" title="${tooltip}">
+        <div class="signal-mini-bar">
+          <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
+        </div>
+        <span class="signal-mini-val">${sq}%</span>
+      </div>
+    `;
+  }
+
+  return '<span class="text-muted" title="No scan data. Signal is captured during channel scans or measured in real-time when actively tuned.">—</span>';
+}
+
 function updateLineupSignalMeters() {
   const rows = lineupTbody.querySelectorAll('tr[data-guide-num]');
   rows.forEach((tr) => {
@@ -1937,30 +1979,15 @@ function updateLineupSignalMeters() {
     const cell = tr.querySelector('.signal-cell');
     if (!cell || !guideNum) return;
 
+    const ch = (state.lineup || []).find(
+      (c) => c.GuideNumber && (c.GuideNumber === guideNum || String(c.GuideNumber) === String(guideNum))
+    );
+
     const activeTuner = (state.tuners || []).find(
       (t) => t.VctNumber && (t.VctNumber === guideNum || String(t.VctNumber) === String(guideNum))
     );
 
-    if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
-      const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
-      const ss = activeTuner.SignalStrengthPercent;
-      let gradeClass = 'poor';
-      if (sq >= 80) gradeClass = 'good';
-      else if (sq >= 60) gradeClass = 'fair';
-
-      const tunerLabel = formatTunerName(activeTuner.Resource);
-      const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
-      cell.innerHTML = `
-        <div class="signal-meter-wrapper" title="${tooltip}">
-          <div class="signal-mini-bar">
-            <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
-          </div>
-          <span class="signal-mini-val">${sq}%</span>
-        </div>
-      `;
-    } else {
-      cell.innerHTML = '<span class="text-muted" title="Channel not currently tuned. Signal is measured in real-time when actively streaming or recording.">—</span>';
-    }
+    cell.innerHTML = getLineupSignalHtml(ch, activeTuner);
   });
 }
 
@@ -2117,6 +2144,22 @@ function setupLineupFilters() {
 }
 
 function renderLineup() {
+  const hasAnyScanSignal = (state.lineup || []).some(
+    (ch) => ch.SignalQuality != null || ch.SignalStrength != null
+  );
+  const signalNoticeEl = document.getElementById('lineup-signal-notice');
+  if (signalNoticeEl) {
+    if (!hasAnyScanSignal && state.lineup && state.lineup.length > 0) {
+      signalNoticeEl.classList.remove('hidden');
+      const lineupLink = document.getElementById('link-hdhr-web-lineup');
+      if (lineupLink) {
+        lineupLink.href = `http://${state.currentIp}/lineup.html`;
+      }
+    } else {
+      signalNoticeEl.classList.add('hidden');
+    }
+  }
+
   const filtered = state.lineup.filter((ch) => {
     const station = getStationInfo(ch.GuideName);
     // Text search (matches GuideName, GuideNumber, Network, or City/State)
@@ -2195,26 +2238,8 @@ function renderLineup() {
       (t) => t.VctNumber && (t.VctNumber === ch.GuideNumber || String(t.VctNumber) === String(ch.GuideNumber))
     );
 
-    // Signal Quality meter (colors with % in tooltip)
-    let signalHtml = '<span class="text-muted" title="Channel not currently tuned. Signal is measured in real-time when actively streaming or recording.">—</span>';
-    if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
-      const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
-      const ss = activeTuner.SignalStrengthPercent;
-      let gradeClass = 'poor';
-      if (sq >= 80) gradeClass = 'good';
-      else if (sq >= 60) gradeClass = 'fair';
-
-      const tunerLabel = formatTunerName(activeTuner.Resource);
-      const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
-      signalHtml = `
-        <div class="signal-meter-wrapper" title="${tooltip}">
-          <div class="signal-mini-bar">
-            <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
-          </div>
-          <span class="signal-mini-val">${sq}%</span>
-        </div>
-      `;
-    }
+    // Signal Quality meter (live tuner signal takes precedence over static scan signal)
+    const signalHtml = getLineupSignalHtml(ch, activeTuner);
 
     // Actions for channel
     let actionsHtml = '';
