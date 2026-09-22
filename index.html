@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.32" />
+  <link rel="stylesheet" href="style.css?v=2.0.33" />
 </head>
 <body>
   <div class="app-shell">
@@ -547,6 +547,15 @@
               </div>
             </div>
 
+            <!-- Idle Tuner Warning Banner -->
+            <div id="diag-idle-warning" class="diag-warning-banner hidden">
+              <span class="diag-warning-icon">⚠️</span>
+              <div class="diag-warning-text">
+                <strong>All tuners are currently idle.</strong>
+                <span>Diagnostics require an active stream to be useful. Please open the live feed in the HDHomeRun app (or tune to a channel in Plex, Channels, or VLC) and then try again.</span>
+              </div>
+            </div>
+
             <div class="diag-toolbar mt-12">
               <div class="diag-options">
                 <label class="checkbox-label" title="Redact DeviceAuth token before sharing">
@@ -588,13 +597,13 @@
           <div class="card">
             <div class="card-header-with-actions">
               <h3>About HDHR Dash</h3>
-              <span id="app-version-badge" class="badge badge-hd">v2.0.32</span>
+              <span id="app-version-badge" class="badge badge-hd">v2.0.33</span>
             </div>
             <p class="text-sm text-muted mb-12">Lightweight, zero-dependency web dashboard for SiliconDust HDHomeRun tuners.</p>
             <div class="info-list">
               <div class="info-row">
                 <span class="info-label">Application Version</span>
-                <span id="info-app-version" class="info-val font-mono">v2.0.32</span>
+                <span id="info-app-version" class="info-val font-mono">v2.0.33</span>
               </div>
               <div class="info-row">
                 <span class="info-label">PWA Mode</span>
@@ -651,6 +660,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.32"></script>
+  <script src="app.js?v=2.0.33"></script>
 </body>
 </html>

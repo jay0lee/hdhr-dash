@@ -1943,6 +1943,41 @@ body {
   flex-wrap: wrap;
 }
 
+.diag-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background-color: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  margin-top: 14px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.diag-warning-banner .diag-warning-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.diag-warning-banner .diag-warning-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.diag-warning-banner .diag-warning-text strong {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.diag-warning-banner .diag-warning-text span {
+  color: var(--text-secondary);
+}
+
 .diag-status-banner {
   display: flex;
   align-items: center;

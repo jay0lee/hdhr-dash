@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.32';
+const APP_VERSION = '2.0.33';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -1053,6 +1053,8 @@ function renderTuners(statusItems) {
     updateTunerDetailView(activeTuner, liveSessions);
     renderTunerGraph();
   }
+
+  updateDiagIdleWarning(statusItems);
 }
 
 function renderMetricBar(label, percent) {
@@ -2599,6 +2601,39 @@ function renderAppInfo() {
    Diagnostic Logs & Export
    ========================================================================== */
 
+function isAnyTunerActive(statusItems) {
+  if (!Array.isArray(statusItems) || statusItems.length === 0) return false;
+  return statusItems.some((item) => {
+    const isTuner = item.Resource && item.Resource.toLowerCase().startsWith('tuner');
+    if (!isTuner) return false;
+    return Boolean(
+      item.VctNumber ||
+      item.Vchannel ||
+      (item.TargetIP && item.TargetIP !== 'none' && item.TargetIP !== '127.0.0.1' && item.TargetIP !== '[::1]') ||
+      (item.SignalStrengthPercent && item.SignalStrengthPercent > 0) ||
+      (item.SignalStrength && item.SignalStrength > 0)
+    );
+  });
+}
+
+function updateDiagIdleWarning(statusItems) {
+  const diagIdleWarning = document.getElementById('diag-idle-warning');
+  if (!diagIdleWarning) return;
+
+  const tuners = statusItems || state.tuners;
+  if (!Array.isArray(tuners) || tuners.length === 0) {
+    diagIdleWarning.classList.add('hidden');
+    return;
+  }
+
+  const anyActive = isAnyTunerActive(tuners);
+  if (!anyActive) {
+    diagIdleWarning.classList.remove('hidden');
+  } else {
+    diagIdleWarning.classList.add('hidden');
+  }
+}
+
 function setupDiagnostics() {
   const btnGatherDiag = document.getElementById('btn-gather-diag');
   const btnCopyDiag = document.getElementById('btn-copy-diag');
@@ -2629,6 +2664,8 @@ function setupDiagnostics() {
       }
     });
   }
+
+  updateDiagIdleWarning();
 }
 
 async function fetchDiagnosticEndpoint(url, timeoutMs = 4500) {
@@ -2731,6 +2768,10 @@ async function gatherDiagnostics() {
 
     renderDiagnosticsOutput();
 
+    // Check tuner activity and update warning
+    const anyActive = isAnyTunerActive(statusRes.available ? statusRes.data : state.tuners);
+    updateDiagIdleWarning(statusRes.available ? statusRes.data : state.tuners);
+
     // Show copy, download & GitHub issue buttons
     if (btnCopyDiag) btnCopyDiag.classList.remove('hidden');
     if (btnDownloadDiag) btnDownloadDiag.classList.remove('hidden');
@@ -2739,9 +2780,13 @@ async function gatherDiagnostics() {
 
     if (diagStatusBanner) {
       diagStatusBanner.classList.add('success');
-      if (diagStatusIcon) diagStatusIcon.textContent = '✅';
+      if (diagStatusIcon) diagStatusIcon.textContent = anyActive ? '✅' : '⚠️';
       if (diagStatusText) {
-        diagStatusText.textContent = `Successfully gathered ${availableCount} of ${feeds.length} diagnostic feeds from ${ip}.`;
+        if (!anyActive) {
+          diagStatusText.textContent = `Gathered ${availableCount} of ${feeds.length} feeds. Notice: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
+        } else {
+          diagStatusText.textContent = `Successfully gathered ${availableCount} of ${feeds.length} diagnostic feeds from ${ip}.`;
+        }
       }
     }
   } catch (err) {
@@ -2910,6 +2955,9 @@ function openGitHubIssue() {
         body += `- **${name}:** Channel ${t.Vchannel || 'None'} | Signal: ${t.SignalStrength}% | SNR: ${t.SignalQuality}% | Sym: ${t.SymbolQuality}%\n`;
       });
       body += `\n`;
+    } else {
+      body += `### Current Tuner Status\n`;
+      body += `> ⚠️ **Notice:** All tuners were idle when diagnostics were gathered. The HDHomeRun powers down its demodulator when idle; RF signal metrics (Signal Strength, SNR, Symbol Quality) require an active live stream in the HDHomeRun app, Plex, Channels, or VLC.\n\n`;
     }
   }
 
