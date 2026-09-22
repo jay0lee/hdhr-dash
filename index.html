@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.51" />
+  <link rel="stylesheet" href="style.css?v=2.0.52" />
 </head>
 <body>
   <div class="app-shell">
@@ -514,38 +514,27 @@
               </button>
             </div>
           </div>
-          <!-- Theme & Appearance Card -->
-          <div class="card">
-            <h3>Theme & Appearance</h3>
-            <p class="text-sm text-muted mb-12">Choose your preferred visual theme and color scheme.</p>
-            <div class="theme-options-grid">
-              <button class="theme-btn" data-theme-val="dark">
-                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #0b1120 50%, #1e293b 50%); border: 1px solid #38bdf8;"></span>
-                <span class="theme-btn-label">🌙 Dark (Default)</span>
-              </button>
-              <button class="theme-btn" data-theme-val="light">
-                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #f1f5f9 50%, #ffffff 50%); border: 1px solid #0284c7;"></span>
-                <span class="theme-btn-label">☀️ Light</span>
-              </button>
-              <button class="theme-btn" data-theme-val="oled">
-                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #000000 50%, #111111 50%); border: 1px solid #38bdf8;"></span>
-                <span class="theme-btn-label">🖤 OLED Black</span>
-              </button>
-              <button class="theme-btn" data-theme-val="teal">
-                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #041b1d 50%, #082f32 50%); border: 1px solid #2dd4bf;"></span>
-                <span class="theme-btn-label">🌊 Teal (HDHR)</span>
-              </button>
-              <button class="theme-btn" data-theme-val="nord">
-                <span class="theme-preview-dots" style="background: linear-gradient(135deg, #242933 50%, #2e3440 50%); border: 1px solid #88c0d0;"></span>
-                <span class="theme-btn-label">❄️ Nord Frost</span>
-              </button>
-            </div>
-          </div>
-
           <!-- Preferences Card -->
           <div class="card">
             <h3>Preferences</h3>
-            <p class="text-sm text-muted mb-12">Configure application and recording options.</p>
+            <p class="text-sm text-muted mb-12">Configure application, appearance, and recording options.</p>
+
+            <div class="pref-row">
+              <div class="pref-info">
+                <strong>Theme & Appearance</strong>
+                <p class="text-sm text-muted">Choose your preferred visual theme and color scheme.</p>
+              </div>
+              <div class="pref-control">
+                <select id="pref-theme-select" class="pref-select" title="Theme">
+                  <option value="dark">🌙 Dark (Default)</option>
+                  <option value="light">☀️ Light</option>
+                  <option value="oled">🖤 OLED Black</option>
+                  <option value="teal">🌊 Teal (HDHR)</option>
+                  <option value="nord">❄️ Nord Frost</option>
+                </select>
+              </div>
+            </div>
+
             <div class="pref-row">
               <div class="pref-info">
                 <strong>Confirm Recording Deletions</strong>
@@ -617,13 +606,13 @@
           <div class="card">
             <div class="card-header-with-actions">
               <h3>About HDHR Dash</h3>
-              <span id="app-version-badge" class="badge badge-hd">v2.0.51</span>
+              <span id="app-version-badge" class="badge badge-hd">v2.0.52</span>
             </div>
             <p class="text-sm text-muted mb-12">Lightweight, zero-dependency web dashboard for SiliconDust HDHomeRun tuners.</p>
             <div class="info-list">
               <div class="info-row">
                 <span class="info-label">Application Version</span>
-                <span id="info-app-version" class="info-val font-mono">v2.0.51</span>
+                <span id="info-app-version" class="info-val font-mono">v2.0.52</span>
               </div>
               <div class="info-row">
                 <span class="info-label">PWA Mode</span>
@@ -673,6 +662,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.51"></script>
+  <script src="app.js?v=2.0.52"></script>
 </body>
 </html>

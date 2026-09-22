@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.51';
+const APP_VERSION = '2.0.52';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -271,12 +271,12 @@ function setupTheme() {
     });
   }
 
-  const themeBtns = document.querySelectorAll('.theme-btn');
-  themeBtns.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      applyTheme(btn.dataset.themeVal);
+  const prefThemeSelect = document.getElementById('pref-theme-select');
+  if (prefThemeSelect) {
+    prefThemeSelect.addEventListener('change', (e) => {
+      applyTheme(e.target.value);
     });
-  });
+  }
 }
 
 function applyTheme(theme) {
@@ -288,14 +288,10 @@ function applyTheme(theme) {
     themeSelect.value = theme;
   }
 
-  const themeBtns = document.querySelectorAll('.theme-btn');
-  themeBtns.forEach((btn) => {
-    if (btn.dataset.themeVal === theme) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
-  });
+  const prefThemeSelect = document.getElementById('pref-theme-select');
+  if (prefThemeSelect && prefThemeSelect.value !== theme) {
+    prefThemeSelect.value = theme;
+  }
 
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
