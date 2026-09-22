@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.53';
+const APP_VERSION = '2.0.54';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -955,6 +955,40 @@ async function loadChannelsCount() {
   }
 }
 
+async function discoverLocalMdns() {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const res = await fetch('http://hdhomerun.local/discover.json', { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data && (data.DeviceID || data.ModelNumber)) {
+      // Determine host: prefer hostname from BaseURL if available, or 'hdhomerun.local'
+      let host = 'hdhomerun.local';
+      if (data.BaseURL) {
+        try {
+          const u = new URL(data.BaseURL);
+          if (u.hostname) host = u.hostname;
+        } catch (e) {}
+      }
+      const dev = {
+        ip: host,
+        ModelNumber: data.ModelNumber,
+        DeviceID: data.DeviceID,
+        StorageURL: data.StorageURL,
+      };
+      saveDevice(dev);
+      renderDeviceDropdown();
+      renderDiscoveredList();
+      return dev;
+    }
+  } catch (e) {
+    console.log('Local mDNS discovery skipped or offline:', e.message);
+  }
+  return null;
+}
+
 async function discoverCloudDevices() {
   try {
     const res = await fetch('https://api.hdhomerun.com/discover');
@@ -998,19 +1032,34 @@ function goToManualIpEntry() {
 async function initDeviceConnection() {
   let connected = false;
 
-  // 1. Try saved IP if present
+  // 1. Try saved IP/host if present
   if (state.currentIp) {
     connected = await loadDeviceDetails();
     if (connected) {
       const noticeEl = document.getElementById('no-device-notice');
       if (noticeEl) noticeEl.classList.add('hidden');
-      // Background cloud discovery to find other devices on network
+      // Background check for other devices
+      discoverLocalMdns().catch(() => {});
       discoverCloudDevices().catch(() => {});
       return;
     }
   }
 
-  // 2. If no saved IP or saved IP failed, run cloud discovery
+  // 2. Try local mDNS discovery (supports CORS directly from HDHomeRun)
+  const localDev = await discoverLocalMdns();
+  if (localDev && localDev.ip) {
+    state.currentIp = localDev.ip;
+    localStorage.setItem(STORAGE_ACTIVE_IP, localDev.ip);
+    renderDeviceDropdown();
+    connected = await loadDeviceDetails();
+    if (connected) {
+      const noticeEl = document.getElementById('no-device-notice');
+      if (noticeEl) noticeEl.classList.add('hidden');
+      return;
+    }
+  }
+
+  // 3. Try cloud discovery (api.hdhomerun.com)
   const discovered = await discoverCloudDevices();
   if (discovered && discovered.length > 0) {
     const primaryDev = discovered[0];
@@ -1028,7 +1077,7 @@ async function initDeviceConnection() {
     }
   }
 
-  // 3. Neither worked: go to manual IP entry
+  // 4. Neither worked: go to manual IP entry
   goToManualIpEntry();
 }
 
@@ -1062,8 +1111,8 @@ function setupDeviceManagement() {
   btnRediscover.addEventListener('click', async () => {
     btnRediscover.disabled = true;
     btnRediscover.textContent = 'Discovering...';
-    await discoverCloudDevices();
-    btnRediscover.textContent = '🔍 Run Cloud Discovery (api.hdhomerun.com)';
+    await Promise.allSettled([discoverLocalMdns(), discoverCloudDevices()]);
+    btnRediscover.textContent = '🔍 Run Device Discovery';
     btnRediscover.disabled = false;
   });
 
