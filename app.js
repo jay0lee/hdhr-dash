@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.59';
+const APP_VERSION = '2.0.60';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4095,7 +4095,7 @@ function openGitHubIssue() {
   baseBody += `- **Device ID / Serial:** \`[REDACTED]\`\n`;
   baseBody += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
   baseBody += `- **Device IP:** \`${anonymizedIp}\`\n`;
-  baseBody += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
+  baseBody += `- **App Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
   baseBody += `- **User Agent:** \`${navigator.userAgent}\`\n`;
   baseBody += `- **Total Tuners:** ${totalTunerCount}\n`;
   baseBody += `- **Active Tuners:** ${activeTuners.length} (${activeTuners.length === 0 ? 'All tuners idle' : `${activeTuners.length} of ${totalTunerCount} in use`})\n`;

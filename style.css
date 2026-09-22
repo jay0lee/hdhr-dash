@@ -1591,6 +1591,14 @@ body {
   flex: 1;
 }
 
+.pref-info strong {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
 .pref-control {
   flex-shrink: 0;
 }
