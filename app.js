@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.47';
+const APP_VERSION = '2.0.48';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -690,12 +690,11 @@ function parseDeviceStatus(statusItems, ip) {
         ? `Ch ${tuner.VctNumber}${tuner.VctName ? ' ' + tuner.VctName : ''}`
         : (tuner.VctName || tuner.Resource);
 
-      if (!activeClients.some((c) => c.ip === targetIp)) {
-        activeClients.push({
-          ip: targetIp,
-          channel: chLabel,
-        });
-      }
+      activeClients.push({
+        ip: targetIp,
+        channel: chLabel,
+        tuner: tuner.Resource,
+      });
     }
   });
 
@@ -729,10 +728,28 @@ function parseDeviceStatus(statusItems, ip) {
       s.TargetIP !== '::1' &&
       s.TargetIP !== '[::1]'
     ) {
-      if (!activeClients.some((c) => c.ip === s.TargetIP)) {
+      // Find matching tuner if available
+      const matchingTuner = physicalTuners.find(
+        (t) => t.VctNumber && s.Name && s.Name.includes(t.VctNumber)
+      );
+
+      // Do not duplicate if this exact tuner stream was already counted directly on physicalTuners
+      const isAlreadyCounted = matchingTuner && activeClients.some(
+        (c) => c.tuner === matchingTuner.Resource && c.ip === s.TargetIP
+      );
+
+      if (!isAlreadyCounted) {
+        let chLabel = '';
+        if (matchingTuner) {
+          chLabel = `Ch ${matchingTuner.VctNumber}${matchingTuner.VctName ? ' ' + matchingTuner.VctName : ''}`;
+        } else if (s.Name) {
+          chLabel = s.Name.replace(/^Live channel\s+/i, 'Ch ');
+          if (!chLabel.startsWith('Ch ')) chLabel = `Ch ${chLabel}`;
+        }
         activeClients.push({
           ip: s.TargetIP,
-          channel: s.Name ? `Ch ${s.Name}` : '',
+          channel: chLabel,
+          tuner: matchingTuner?.Resource,
         });
       }
     }
