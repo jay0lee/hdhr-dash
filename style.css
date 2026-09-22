@@ -1328,7 +1328,8 @@ body {
   align-items: center;
 }
 
-.btn-delete-series {
+.btn-delete-series,
+.btn-delete-recording {
   margin-left: auto;
   display: inline-flex;
   align-items: center;
