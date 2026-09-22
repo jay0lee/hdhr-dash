@@ -1920,3 +1920,81 @@ body {
   font-family: monospace;
 }
 
+/* ==========================================================================
+   Diagnostic Logs & Export
+   ========================================================================== */
+.diag-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.diag-options {
+  display: flex;
+  align-items: center;
+}
+
+.diag-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.diag-status-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-main);
+  margin-top: 14px;
+  font-size: 0.85rem;
+}
+
+.diag-status-banner.success {
+  border-color: rgba(16, 185, 129, 0.4);
+  background-color: rgba(16, 185, 129, 0.08);
+  color: var(--accent-emerald-light);
+}
+
+.diag-status-banner.error {
+  border-color: rgba(239, 68, 68, 0.4);
+  background-color: rgba(239, 68, 68, 0.08);
+  color: var(--accent-red);
+}
+
+.diag-output-container {
+  margin-top: 14px;
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-card);
+  overflow: hidden;
+}
+
+.diag-output-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--bg-subtle);
+  border-bottom: 1px solid var(--border-main);
+}
+
+.diag-code-block {
+  margin: 0;
+  padding: 12px;
+  max-height: 380px;
+  overflow-y: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  background-color: var(--bg-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}
+

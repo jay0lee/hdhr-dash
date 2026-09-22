@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.30';
+const APP_VERSION = '2.0.31';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -45,6 +45,7 @@ const state = {
     quality: true,
     symbol: true,
   },
+  lastDiagnostics: null,
 };
 
 // Global DOM Elements
@@ -180,6 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDvrPills();
   setupDeviceManagement();
   setupDeleteModal();
+  setupDiagnostics();
   setupPwa();
   renderAppInfo();
 
@@ -2592,3 +2594,277 @@ function renderAppInfo() {
       : '<span class="text-muted">Browser Tab</span>';
   }
 }
+
+/* ==========================================================================
+   Diagnostic Logs & Export
+   ========================================================================== */
+
+function setupDiagnostics() {
+  const btnGatherDiag = document.getElementById('btn-gather-diag');
+  const btnCopyDiag = document.getElementById('btn-copy-diag');
+  const btnDownloadDiag = document.getElementById('btn-download-diag');
+  const diagRedactAuth = document.getElementById('diag-redact-auth');
+
+  if (btnGatherDiag) {
+    btnGatherDiag.addEventListener('click', () => gatherDiagnostics());
+  }
+
+  if (btnCopyDiag) {
+    btnCopyDiag.addEventListener('click', () => copyDiagnosticsToClipboard());
+  }
+
+  if (btnDownloadDiag) {
+    btnDownloadDiag.addEventListener('click', () => downloadDiagnosticsJson());
+  }
+
+  if (diagRedactAuth) {
+    diagRedactAuth.addEventListener('change', () => {
+      if (state.lastDiagnostics) {
+        renderDiagnosticsOutput();
+      }
+    });
+  }
+}
+
+async function fetchDiagnosticEndpoint(url, timeoutMs = 4500) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) {
+      return {
+        available: false,
+        status: res.status,
+        statusText: res.statusText,
+        error: `HTTP ${res.status}: ${res.statusText}`,
+      };
+    }
+    const data = await res.json();
+    return {
+      available: true,
+      status: res.status,
+      data: data,
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    return {
+      available: false,
+      status: 'error',
+      error: err.name === 'AbortError' ? `Request timed out after ${timeoutMs / 1000}s` : err.message,
+    };
+  }
+}
+
+async function gatherDiagnostics() {
+  const btnGatherDiag = document.getElementById('btn-gather-diag');
+  const btnCopyDiag = document.getElementById('btn-copy-diag');
+  const btnDownloadDiag = document.getElementById('btn-download-diag');
+  const diagStatusBanner = document.getElementById('diag-status-banner');
+  const diagStatusIcon = document.getElementById('diag-status-icon');
+  const diagStatusText = document.getElementById('diag-status-text');
+
+  const ip = state.currentIp;
+  if (!ip) {
+    alert('No active device IP selected.');
+    return;
+  }
+
+  // Update UI to loading state
+  if (btnGatherDiag) {
+    btnGatherDiag.disabled = true;
+    btnGatherDiag.textContent = '⏳ Gathering...';
+  }
+  if (diagStatusBanner) {
+    diagStatusBanner.className = 'diag-status-banner';
+    diagStatusBanner.classList.remove('hidden', 'success', 'error');
+    if (diagStatusIcon) diagStatusIcon.textContent = '⏳';
+    if (diagStatusText) diagStatusText.textContent = `Gathering diagnostic feeds from HDHomeRun at ${ip}...`;
+  }
+
+  try {
+    const dvrUrl = state.dvrStorageUrl
+      ? `${state.dvrStorageUrl}/recorded_files.json`
+      : `http://${ip}/recorded_files.json`;
+
+    // Fetch all endpoints concurrently
+    const [discoverRes, statusRes, lineupRes, lineupStatusRes, recordedRes] = await Promise.all([
+      fetchDiagnosticEndpoint(`http://${ip}/discover.json`),
+      fetchDiagnosticEndpoint(`http://${ip}/status.json`),
+      fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found`),
+      fetchDiagnosticEndpoint(`http://${ip}/lineup_status.json`),
+      fetchDiagnosticEndpoint(dvrUrl),
+    ]);
+
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+    // Build raw diagnostics bundle
+    const rawBundle = {
+      dashboard: {
+        app_version: `v${APP_VERSION}`,
+        generated_at: new Date().toISOString(),
+        user_agent: navigator.userAgent,
+        pwa_mode: isStandalone ? 'standalone' : 'browser_tab',
+        active_device_ip: ip,
+        active_tab: state.activeTab,
+      },
+      device: {
+        discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
+        status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
+        lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
+        lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
+        recorded_files: recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status },
+      },
+      tuner_history: state.tunerHistory && Object.keys(state.tunerHistory).length > 0 ? state.tunerHistory : null,
+    };
+
+    state.lastDiagnostics = rawBundle;
+
+    // Count available feeds
+    const feeds = [discoverRes, statusRes, lineupRes, lineupStatusRes, recordedRes];
+    const availableCount = feeds.filter((f) => f.available).length;
+
+    renderDiagnosticsOutput();
+
+    // Show copy & download buttons
+    if (btnCopyDiag) btnCopyDiag.classList.remove('hidden');
+    if (btnDownloadDiag) btnDownloadDiag.classList.remove('hidden');
+
+    if (diagStatusBanner) {
+      diagStatusBanner.classList.add('success');
+      if (diagStatusIcon) diagStatusIcon.textContent = '✅';
+      if (diagStatusText) {
+        diagStatusText.textContent = `Successfully gathered ${availableCount} of ${feeds.length} diagnostic feeds from ${ip}.`;
+      }
+    }
+  } catch (err) {
+    console.error('Error gathering diagnostics:', err);
+    if (diagStatusBanner) {
+      diagStatusBanner.classList.add('error');
+      if (diagStatusIcon) diagStatusIcon.textContent = '⚠️';
+      if (diagStatusText) diagStatusText.textContent = `Failed to gather diagnostics: ${err.message}`;
+    }
+  } finally {
+    if (btnGatherDiag) {
+      btnGatherDiag.disabled = false;
+      btnGatherDiag.textContent = '📥 Refresh Diagnostics';
+    }
+  }
+}
+
+function processDiagnostics(rawBundle, redactAuth) {
+  if (!rawBundle) return null;
+  const cloned = JSON.parse(JSON.stringify(rawBundle));
+  if (redactAuth) {
+    const redactObject = (obj) => {
+      if (!obj || typeof obj !== 'object') return;
+      for (const key of Object.keys(obj)) {
+        if (/^deviceauth$/i.test(key)) {
+          obj[key] = '[REDACTED]';
+        } else if (typeof obj[key] === 'object') {
+          redactObject(obj[key]);
+        }
+      }
+    };
+    redactObject(cloned);
+  }
+  return cloned;
+}
+
+function renderDiagnosticsOutput() {
+  if (!state.lastDiagnostics) return;
+  const diagRedactAuth = document.getElementById('diag-redact-auth');
+  const diagOutputWrap = document.getElementById('diag-output-wrap');
+  const diagOutputMeta = document.getElementById('diag-output-meta');
+  const diagOutputPre = document.getElementById('diag-output-pre');
+
+  const shouldRedact = diagRedactAuth ? diagRedactAuth.checked : true;
+  const processed = processDiagnostics(state.lastDiagnostics, shouldRedact);
+  const jsonStr = JSON.stringify(processed, null, 2);
+
+  const bytes = new Blob([jsonStr]).size;
+  const kbSize = (bytes / 1024).toFixed(1);
+
+  let availableFeeds = 0;
+  if (processed.device) {
+    for (const key of Object.keys(processed.device)) {
+      if (processed.device[key] && !processed.device[key].error) {
+        availableFeeds++;
+      }
+    }
+  }
+
+  if (diagOutputMeta) {
+    diagOutputMeta.textContent = `${kbSize} KB • ${availableFeeds} feeds active • ${shouldRedact ? 'Auth Redacted' : 'Full (Raw)'}`;
+  }
+
+  if (diagOutputPre) {
+    const codeEl = diagOutputPre.querySelector('code') || diagOutputPre;
+    codeEl.textContent = jsonStr;
+  }
+
+  if (diagOutputWrap) {
+    diagOutputWrap.classList.remove('hidden');
+  }
+}
+
+async function copyDiagnosticsToClipboard() {
+  if (!state.lastDiagnostics) return;
+  const diagRedactAuth = document.getElementById('diag-redact-auth');
+
+  const shouldRedact = diagRedactAuth ? diagRedactAuth.checked : true;
+  const processed = processDiagnostics(state.lastDiagnostics, shouldRedact);
+  const jsonStr = JSON.stringify(processed, null, 2);
+
+  try {
+    await navigator.clipboard.writeText(jsonStr);
+    showCopyFeedback();
+  } catch (err) {
+    const textarea = document.createElement('textarea');
+    textarea.value = jsonStr;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      showCopyFeedback();
+    } catch (fallbackErr) {
+      alert('Failed to copy to clipboard: ' + fallbackErr.message);
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+}
+
+function showCopyFeedback() {
+  const diagCopyFeedback = document.getElementById('diag-copy-feedback');
+  if (diagCopyFeedback) {
+    diagCopyFeedback.classList.remove('hidden');
+    setTimeout(() => {
+      diagCopyFeedback.classList.add('hidden');
+    }, 2500);
+  }
+}
+
+function downloadDiagnosticsJson() {
+  if (!state.lastDiagnostics) return;
+  const diagRedactAuth = document.getElementById('diag-redact-auth');
+  const shouldRedact = diagRedactAuth ? diagRedactAuth.checked : true;
+  const processed = processDiagnostics(state.lastDiagnostics, shouldRedact);
+  const jsonStr = JSON.stringify(processed, null, 2);
+
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+
+  const devId = processed.device?.discover?.DeviceID || (state.currentIp ? state.currentIp.replace(/\./g, '-') : 'device');
+  const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
+  a.href = url;
+  a.download = `hdhr-diagnostics-${devId}-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
