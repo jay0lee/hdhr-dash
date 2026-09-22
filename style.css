@@ -2040,38 +2040,56 @@ body {
 .channel-identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+}
+
+.channel-logo-wrap {
+  width: 32px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .affiliate-logo {
-  width: 32px;
-  height: 22px;
+  max-width: 32px;
+  max-height: 22px;
+  width: auto;
+  height: auto;
   object-fit: contain;
-  flex-shrink: 0;
   vertical-align: middle;
   border-radius: 3px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.25));
 }
 
+.generic-tv-logo {
+  opacity: 0.5;
+  filter: none;
+}
+
 .tuner-affiliate-logo {
-  width: 36px;
-  height: 26px;
+  max-width: 36px;
+  max-height: 26px;
 }
 
 .channel-identity-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
+  min-width: 0;
 }
 
 .channel-guide-name {
   font-weight: 600;
   color: var(--text-primary);
+  line-height: 1.25;
 }
 
 .channel-locality {
   font-size: 0.72rem;
   color: var(--text-muted);
+  line-height: 1.2;
 }
 
 .tuner-channel-row {
@@ -2102,5 +2120,6 @@ body {
   font-size: 0.75rem;
   padding: 2px 6px;
 }
+
 
 

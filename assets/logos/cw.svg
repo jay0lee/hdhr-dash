@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 70" width="100%" height="100%">
-  <rect x="5" y="8" width="90" height="54" rx="12" fill="#1C6B37"/>
-  <text x="50" y="47" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="34" font-weight="900" fill="#FFFFFF" text-anchor="middle" font-style="italic" letter-spacing="-2">CW</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 66" width="100%" height="100%">
+  <!-- The CW Green Pill -->
+  <rect x="2" y="2" width="96" height="62" rx="14" fill="#1C6B37"/>
+  <text x="50" y="45" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="36" font-weight="900" fill="#FFFFFF" text-anchor="middle" font-style="italic" letter-spacing="-2">CW</text>
 </svg>

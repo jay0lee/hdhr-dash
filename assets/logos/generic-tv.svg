@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 26" width="100%" height="100%" fill="none">
+  <!-- Minimalist TV monitor with stand -->
+  <rect x="3" y="2" width="30" height="19" rx="3" stroke="#64748B" stroke-width="1.75" fill="rgba(100, 116, 139, 0.12)"/>
+  <polygon points="15,8 15,15 22,11.5" fill="#64748B" opacity="0.75"/>
+  <line x1="18" y1="21" x2="18" y2="24" stroke="#64748B" stroke-width="1.75"/>
+  <line x1="13" y1="24" x2="23" y2="24" stroke="#64748B" stroke-width="1.75" stroke-linecap="round"/>
+</svg>

@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.40';
+const APP_VERSION = '2.0.41';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -1879,23 +1879,32 @@ function renderLineup() {
     }
 
     const stationInfo = getStationInfo(ch.GuideName);
-    let channelNameHtml = '';
-    if (stationInfo) {
-      const logoHtml = stationInfo.logo
-        ? `<img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" />`
-        : `<span class="badge badge-affiliate">${stationInfo.network}</span>`;
-      channelNameHtml = `
-        <div class="channel-identity">
-          ${logoHtml}
-          <div class="channel-identity-text">
-            <span class="channel-guide-name">${ch.GuideName || 'Unknown'}</span>
-            ${stationInfo.locality ? `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>` : ''}
-          </div>
-        </div>
-      `;
+    let logoHtml = '';
+    let localityHtml = '';
+
+    if (stationInfo && stationInfo.logo) {
+      logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
+      if (stationInfo.locality) {
+        localityHtml = `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>`;
+      }
+    } else if (stationInfo && stationInfo.network) {
+      logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
+      if (stationInfo.locality) {
+        localityHtml = `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>`;
+      }
     } else {
-      channelNameHtml = `<span class="channel-guide-name">${ch.GuideName || 'Unknown'}</span>`;
+      logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
     }
+
+    const channelNameHtml = `
+      <div class="channel-identity">
+        ${logoHtml}
+        <div class="channel-identity-text">
+          <span class="channel-guide-name">${ch.GuideName || 'Unknown'}</span>
+          ${localityHtml}
+        </div>
+      </div>
+    `;
 
     tr.innerHTML = `
       <td class="channel-num-cell">${ch.GuideNumber}</td>
