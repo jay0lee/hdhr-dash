@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.48';
+const APP_VERSION = '2.0.49';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -440,6 +440,13 @@ async function refreshActiveTab() {
         await fetchLineup();
       } else {
         updateLineupStats();
+        try {
+          const statusRes = await fetch(`http://${state.currentIp}/status.json`);
+          if (statusRes.ok) {
+            const statusItems = await statusRes.json();
+            if (Array.isArray(statusItems)) state.tuners = statusItems;
+          }
+        } catch (e) {}
         renderLineup();
       }
       break;
@@ -1880,6 +1887,8 @@ function startPolling() {
         updateSystemLiveStatus();
       } else if (state.activeTab === 'recordings') {
         updateRecordingsLiveStatus();
+      } else if (state.activeTab === 'lineup') {
+        updateLineupLiveStatus();
       }
     }
   }, state.pollInterval);
@@ -1905,6 +1914,54 @@ async function updateRecordingsLiveStatus() {
   } catch (e) {
     // Non-critical, ignore polling errors
   }
+}
+
+async function updateLineupLiveStatus() {
+  const ip = state.currentIp;
+  try {
+    const statusRes = await fetch(`http://${ip}/status.json`);
+    if (!statusRes.ok) return;
+    const statusItems = await statusRes.json();
+    if (!Array.isArray(statusItems)) return;
+    state.tuners = statusItems;
+    updateLineupSignalMeters();
+  } catch (e) {
+    // Non-critical, ignore polling errors
+  }
+}
+
+function updateLineupSignalMeters() {
+  const rows = lineupTbody.querySelectorAll('tr[data-guide-num]');
+  rows.forEach((tr) => {
+    const guideNum = tr.getAttribute('data-guide-num');
+    const cell = tr.querySelector('.signal-cell');
+    if (!cell || !guideNum) return;
+
+    const activeTuner = (state.tuners || []).find(
+      (t) => t.VctNumber && (t.VctNumber === guideNum || String(t.VctNumber) === String(guideNum))
+    );
+
+    if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
+      const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
+      const ss = activeTuner.SignalStrengthPercent;
+      let gradeClass = 'poor';
+      if (sq >= 80) gradeClass = 'good';
+      else if (sq >= 60) gradeClass = 'fair';
+
+      const tunerLabel = formatTunerName(activeTuner.Resource);
+      const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
+      cell.innerHTML = `
+        <div class="signal-meter-wrapper" title="${tooltip}">
+          <div class="signal-mini-bar">
+            <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
+          </div>
+          <span class="signal-mini-val">${sq}%</span>
+        </div>
+      `;
+    } else {
+      cell.innerHTML = '<span class="text-muted" title="Channel not currently tuned. Signal is measured in real-time when actively streaming or recording.">—</span>';
+    }
+  });
 }
 
 function updateEpisodePlaybackBadges() {
@@ -2015,11 +2072,22 @@ async function fetchLineup() {
   lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
 
   try {
-    // Query with show=found to get all discovered channels including hidden/disabled ones
-    const res = await fetch(`http://${ip}/lineup.json?show=found`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const lineup = await res.json();
+    // Concurrently fetch lineup and status so active tuner signal meters are available
+    const [lineupRes, statusRes] = await Promise.all([
+      fetch(`http://${ip}/lineup.json?show=found`),
+      fetch(`http://${ip}/status.json`).catch(() => null)
+    ]);
+
+    if (!lineupRes.ok) throw new Error(`HTTP ${lineupRes.status}`);
+    const lineup = await lineupRes.json();
     state.lineup = Array.isArray(lineup) ? lineup : [];
+
+    if (statusRes && statusRes.ok) {
+      const statusItems = await statusRes.json();
+      if (Array.isArray(statusItems)) {
+        state.tuners = statusItems;
+      }
+    }
 
     updateLineupStats();
     renderLineup();
@@ -2093,6 +2161,7 @@ function renderLineup() {
   lineupTbody.innerHTML = '';
   filtered.forEach((ch) => {
     const tr = document.createElement('tr');
+    tr.setAttribute('data-guide-num', ch.GuideNumber);
     const isHd = ch.HD === 1;
     const isHidden = ch.Enabled === 0;
     const isFav = ch.Favorite === 1;
@@ -2121,21 +2190,28 @@ function renderLineup() {
       ? '<span class="badge badge-drm" title="Encrypted with ATSC 3.0 DRM">🔒 DRM</span>'
       : '';
 
+    // Check if any physical tuner is currently tuned to this channel
+    const activeTuner = (state.tuners || []).find(
+      (t) => t.VctNumber && (t.VctNumber === ch.GuideNumber || String(t.VctNumber) === String(ch.GuideNumber))
+    );
+
     // Signal Quality meter (colors with % in tooltip)
-    let signalHtml = '<span class="text-muted">—</span>';
-    if (ch.SignalQuality != null || ch.SignalStrength != null) {
-      const sq = ch.SignalQuality ?? ch.SignalStrength;
-      const ss = ch.SignalStrength;
+    let signalHtml = '<span class="text-muted" title="Channel not currently tuned. Signal is measured in real-time when actively streaming or recording.">—</span>';
+    if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
+      const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
+      const ss = activeTuner.SignalStrengthPercent;
       let gradeClass = 'poor';
       if (sq >= 80) gradeClass = 'good';
       else if (sq >= 60) gradeClass = 'fair';
 
-      const tooltip = `${sq}% Signal Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
+      const tunerLabel = formatTunerName(activeTuner.Resource);
+      const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
       signalHtml = `
         <div class="signal-meter-wrapper" title="${tooltip}">
           <div class="signal-mini-bar">
             <div class="signal-mini-fill ${gradeClass}" style="width: ${sq}%;"></div>
           </div>
+          <span class="signal-mini-val">${sq}%</span>
         </div>
       `;
     }
@@ -2203,7 +2279,7 @@ function renderLineup() {
           ${drmBadge}
         </div>
       </td>
-      <td>
+      <td class="signal-cell">
         ${signalHtml}
       </td>
       <td class="table-actions">

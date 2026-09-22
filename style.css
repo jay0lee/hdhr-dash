@@ -842,7 +842,15 @@ body {
 .signal-meter-wrapper {
   display: flex;
   align-items: center;
+  gap: 6px;
   cursor: help;
+}
+
+.signal-mini-val {
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  color: var(--text-main);
+  font-weight: 500;
 }
 
 .signal-mini-bar {
