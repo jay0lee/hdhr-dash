@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.58';
+const APP_VERSION = '2.0.59';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -142,6 +142,7 @@ const detailChannelName = document.getElementById('detail-channel-name');
 const detailChannelLocality = document.getElementById('detail-channel-locality');
 const detailChannelNumber = document.getElementById('detail-channel-number');
 const detailChannelBand = document.getElementById('detail-channel-band');
+const detailChannelRf = document.getElementById('detail-channel-rf');
 const detailClientsList = document.getElementById('detail-clients-list');
 const detailNetworkRate = document.getElementById('detail-network-rate');
 const sampleRatePills = document.querySelectorAll('#sample-rate-pills .pill');
@@ -1466,16 +1467,13 @@ function renderTuners(statusItems) {
         `;
       }
 
-      // Network bitrate / Frequency
+      // Network bitrate
       const rfInfo = getRfChannelInfo(tuner.Frequency || (state.lineup?.find(c => c.GuideNumber === tuner.VctNumber)?.Frequency));
       let rateDisplay = '';
       if (tuner.NetworkRate) {
         rateDisplay = `<span>Rate: <strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong></span>`;
-      } else if (tuner.Frequency) {
+      } else if (tuner.Frequency && !rfInfo) {
         rateDisplay = `<span>Freq: ${(tuner.Frequency / 1000000).toFixed(3)} MHz</span>`;
-      }
-      if (rfInfo && tuner.NetworkRate) {
-        rateDisplay += `<span> • <strong>${rfInfo.freqMhz} MHz</strong> (RF ${rfInfo.rf || '—'})</span>`;
       }
 
       if (clientSessions.length > 1) {
@@ -1484,6 +1482,10 @@ function renderTuners(statusItems) {
 
       const bandBadge = rfInfo
         ? `<span class="badge ${rfInfo.band === 'UHF' ? 'badge-uhf' : 'badge-vhf'}" title="${rfInfo.bandDetail} (Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz)">${rfInfo.band}</span>`
+        : '';
+
+      const rfSubHtml = rfInfo
+        ? `<div class="tuner-channel-rf text-xs text-muted" title="${rfInfo.bandDetail} • Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz">${rfInfo.freqMhz} MHz • RF ${rfInfo.rf || '—'}</div>`
         : '';
 
       const stationInfo = getStationInfo(tuner.VctName);
@@ -1512,8 +1514,13 @@ function renderTuners(statusItems) {
               <span class="tuner-channel-name">${tuner.VctName || 'Unknown Channel'}</span>
               ${localityHtml}
             </div>
-            <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
-            ${bandBadge}
+            <div class="tuner-channel-badge-group">
+              <div class="tuner-channel-num-row">
+                <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
+                ${bandBadge}
+              </div>
+              ${rfSubHtml}
+            </div>
           </div>
           <div class="tuner-meta-row">
             ${clientsDisplay}
@@ -1873,12 +1880,20 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
         ? `<span class="badge ${rfInfo.band === 'UHF' ? 'badge-uhf' : 'badge-vhf'}" title="${rfInfo.bandDetail} (Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz)">${rfInfo.band}</span>`
         : '';
     }
+    if (detailChannelRf) {
+      detailChannelRf.textContent = rfInfo ? `${rfInfo.freqMhz} MHz • RF ${rfInfo.rf || '—'}` : '';
+      detailChannelRf.title = rfInfo ? `${rfInfo.bandDetail} • Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz` : '';
+    }
   } else {
     if (detailChannelLogo) detailChannelLogo.innerHTML = '';
     detailChannelName.textContent = '—';
     if (detailChannelLocality) detailChannelLocality.textContent = '';
     detailChannelNumber.textContent = '';
     if (detailChannelBand) detailChannelBand.innerHTML = '';
+    if (detailChannelRf) {
+      detailChannelRf.textContent = '';
+      detailChannelRf.title = '';
+    }
   }
 
   // Client(s)
@@ -1890,16 +1905,9 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
     ).join(' ');
   }
 
-  // Network Bitrate / Frequency
-  const detailRfInfo = getRfChannelInfo(tuner.Frequency || (state.lineup?.find(c => c.GuideNumber === tuner.VctNumber)?.Frequency));
+  // Network Bitrate
   if (tuner.NetworkRate) {
-    let text = `<strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong>`;
-    if (detailRfInfo) {
-      text += ` <span class="text-muted text-xs">(${detailRfInfo.freqMhz} MHz • RF ${detailRfInfo.rf || '—'})</span>`;
-    }
-    detailNetworkRate.innerHTML = text;
-  } else if (tuner.Frequency) {
-    detailNetworkRate.textContent = `${(tuner.Frequency / 1000000).toFixed(3)} MHz${detailRfInfo && detailRfInfo.rf ? ` (RF ${detailRfInfo.rf})` : ''}`;
+    detailNetworkRate.innerHTML = `<strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong>`;
   } else {
     detailNetworkRate.innerHTML = '<span class="text-muted">—</span>';
   }

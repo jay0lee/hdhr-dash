@@ -609,10 +609,31 @@ body {
   color: var(--text-primary);
 }
 
+.tuner-channel-badge-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.tuner-channel-num-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tuner-channel-number {
   font-size: 0.95rem;
   font-family: monospace;
   color: var(--accent-cyan);
+}
+
+.tuner-channel-rf {
+  font-size: 0.72rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  line-height: 1.2;
 }
 
 .tuner-meta-row {
@@ -2013,12 +2034,32 @@ body {
   line-height: 1.2;
 }
 
+.detail-channel-badge-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-left: 4px;
+}
+
+.detail-channel-num-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .detail-channel-number {
   font-size: 0.95rem;
   font-family: monospace;
   color: var(--accent-cyan);
   font-weight: 600;
-  margin-left: 4px;
+}
+
+.detail-channel-rf {
+  font-size: 0.74rem;
+  font-family: monospace;
+  color: var(--text-muted);
+  line-height: 1.2;
 }
 
 .detail-tuner-meta {
