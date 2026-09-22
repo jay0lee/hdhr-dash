@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 70" width="100%" height="100%">
+  <!-- F -->
+  <path d="M 12 12 L 40 12 L 40 24 L 25 24 L 25 32 L 38 32 L 38 43 L 25 43 L 25 58 L 12 58 Z" fill="#002C6C"/>
+  <!-- O (with stylized cutouts) -->
+  <path d="M 44 12 L 76 12 L 76 58 L 44 58 Z M 57 24 L 57 46 L 63 46 L 63 24 Z" fill="#002C6C"/>
+  <!-- X -->
+  <path d="M 80 12 L 92 12 L 98 28 L 104 12 L 116 12 L 104 35 L 118 58 L 106 58 L 98 42 L 90 58 L 78 58 L 92 35 Z" fill="#002C6C"/>
+</svg>

@@ -1,0 +1,39 @@
+name: Update Station Database
+
+on:
+  schedule:
+    # Run twice weekly: Mondays and Thursdays at 04:00 UTC
+    - cron: '0 4 * * 1,4'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-stations:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run station generator script
+        run: |
+          python scripts/generate-stations.py
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet stations.json; then
+            echo "No changes in stations.json."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add stations.json
+            git commit -m "Automated update of stations.json database [skip ci]"
+            git push
+          fi

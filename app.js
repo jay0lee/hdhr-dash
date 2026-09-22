@@ -8,7 +8,21 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.39';
+const APP_VERSION = '2.0.40';
+
+// Affiliate Network Logos
+const NETWORK_LOGOS = {
+  ABC: 'assets/logos/abc.svg',
+  CBS: 'assets/logos/cbs.svg',
+  NBC: 'assets/logos/nbc.svg',
+  FOX: 'assets/logos/fox.svg',
+  CW: 'assets/logos/cw.svg',
+  PBS: 'assets/logos/pbs.svg',
+  CBC: 'assets/logos/cbc.svg',
+  CTV: 'assets/logos/ctv.svg',
+  Global: 'assets/logos/global.svg',
+  Citytv: 'assets/logos/citytv.svg',
+};
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -46,6 +60,7 @@ const state = {
     symbol: true,
   },
   lastDiagnostics: null,
+  stationMap: null,
 };
 
 // Global DOM Elements
@@ -184,6 +199,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDiagnostics();
   setupPwa();
   renderAppInfo();
+  loadStationDatabase();
 
   // Populate device dropdown
   renderDeviceDropdown();
@@ -205,6 +221,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 });
+
+async function loadStationDatabase() {
+  try {
+    const res = await fetch('./stations.json');
+    if (res.ok) {
+      state.stationMap = await res.json();
+      if (state.lineup && state.lineup.length > 0) {
+        renderLineup();
+      }
+      if (state.tuners && state.tuners.length > 0) {
+        renderTuners(state.tuners);
+      }
+    }
+  } catch (err) {
+    console.warn('Could not load station database:', err);
+  }
+}
+
+function getStationInfo(guideName) {
+  if (!guideName || !state.stationMap) return null;
+  const base = guideName.toUpperCase().replace(/[\.\-_]?(HD|DT\d*|TV|CD|LD|SD|\d+)$/i, '').trim();
+  const data = state.stationMap[base];
+  if (!data) return null;
+  const [locality, network] = data;
+  return {
+    baseCall: base,
+    locality,
+    network,
+    logo: NETWORK_LOGOS[network] || null,
+  };
+}
 
 /* ==========================================================================
    Theme Management
@@ -972,10 +1019,28 @@ function renderTuners(statusItems) {
         sharedBadge = `<span class="badge badge-hd" title="Tuner Sharing active: ${clientSessions.length} clients sharing this tuner">Shared (${clientSessions.length})</span>`;
       }
 
+      const stationInfo = getStationInfo(tuner.VctName);
+      let logoHtml = '';
+      let localityHtml = '';
+      if (stationInfo) {
+        if (stationInfo.logo) {
+          logoHtml = `<img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" />`;
+        } else {
+          logoHtml = `<span class="badge badge-affiliate">${stationInfo.network}</span>`;
+        }
+        if (stationInfo.locality) {
+          localityHtml = `<span class="tuner-locality text-xs text-muted">(${stationInfo.locality})</span>`;
+        }
+      }
+
       detailsHtml = `
         <div class="tuner-active-info">
           <div class="tuner-channel-row">
-            <span class="tuner-channel-name">${tuner.VctName || 'Unknown Channel'}</span>
+            ${logoHtml}
+            <div class="tuner-channel-title">
+              <span class="tuner-channel-name">${tuner.VctName || 'Unknown Channel'}</span>
+              ${localityHtml}
+            </div>
             <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
           </div>
           <div class="tuner-meta-row">
@@ -1701,11 +1766,16 @@ function setupLineupFilters() {
 
 function renderLineup() {
   const filtered = state.lineup.filter((ch) => {
-    // Text search
+    const station = getStationInfo(ch.GuideName);
+    // Text search (matches GuideName, GuideNumber, Network, or City/State)
     const matchesText =
       !state.filterText ||
       (ch.GuideName && ch.GuideName.toLowerCase().includes(state.filterText)) ||
-      (ch.GuideNumber && ch.GuideNumber.toLowerCase().includes(state.filterText));
+      (ch.GuideNumber && ch.GuideNumber.toLowerCase().includes(state.filterText)) ||
+      (station && (
+        station.network.toLowerCase().includes(state.filterText) ||
+        station.locality.toLowerCase().includes(state.filterText)
+      ));
 
     if (!matchesText) return false;
 
@@ -1808,10 +1878,29 @@ function renderLineup() {
       `;
     }
 
+    const stationInfo = getStationInfo(ch.GuideName);
+    let channelNameHtml = '';
+    if (stationInfo) {
+      const logoHtml = stationInfo.logo
+        ? `<img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" />`
+        : `<span class="badge badge-affiliate">${stationInfo.network}</span>`;
+      channelNameHtml = `
+        <div class="channel-identity">
+          ${logoHtml}
+          <div class="channel-identity-text">
+            <span class="channel-guide-name">${ch.GuideName || 'Unknown'}</span>
+            ${stationInfo.locality ? `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>` : ''}
+          </div>
+        </div>
+      `;
+    } else {
+      channelNameHtml = `<span class="channel-guide-name">${ch.GuideName || 'Unknown'}</span>`;
+    }
+
     tr.innerHTML = `
       <td class="channel-num-cell">${ch.GuideNumber}</td>
       <td class="channel-name-cell">
-        ${ch.GuideName || 'Unknown'}
+        ${channelNameHtml}
       </td>
       <td>
         <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
@@ -3059,8 +3148,13 @@ function openGitHubIssue() {
     if (activeTuners.length > 0) {
       activeTuners.forEach((t) => {
         const name = formatTunerName(t.Resource || 'tuner');
+        const station = getStationInfo(t.VctName || t.Vchannel);
+        let stationMeta = '';
+        if (station) {
+          stationMeta = ` [${station.network} • ${station.locality}]`;
+        }
         const channelDisplay = t.VctNumber
-          ? `${t.VctNumber}${t.VctName ? ` (${t.VctName})` : ''}`
+          ? `${t.VctNumber}${t.VctName ? ` (${t.VctName}${stationMeta})` : stationMeta}`
           : (t.Vchannel || (t.Channel && t.Channel !== 'none' ? t.Channel : 'None'));
         const strength = t.SignalStrengthPercent ?? t.SignalStrength ?? 0;
         const snr = t.SignalQualityPercent ?? t.SignalQuality ?? 0;
