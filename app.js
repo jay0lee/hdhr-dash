@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.55';
+const APP_VERSION = '2.0.56';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -511,6 +511,7 @@ async function switchDevice(newIp) {
 
 async function loadDeviceDetails() {
   const ip = state.currentIp;
+  const labelInfoIp = document.getElementById('label-info-ip');
   if (!ip) {
     connectionDot.className = 'status-dot disconnected';
     infoModel.textContent = '—';
@@ -518,6 +519,7 @@ async function loadDeviceDetails() {
     infoFirmware.textContent = '—';
     infoTuners.textContent = '—';
     infoIp.textContent = '—';
+    if (labelInfoIp) labelInfoIp.textContent = 'Hostname / IP';
     if (typeof infoActiveClients !== 'undefined' && infoActiveClients) infoActiveClients.textContent = '—';
     if (typeof infoActiveRecordings !== 'undefined' && infoActiveRecordings) infoActiveRecordings.textContent = '—';
     if (typeof infoStorageUsed !== 'undefined' && infoStorageUsed) infoStorageUsed.textContent = '—';
@@ -538,6 +540,10 @@ async function loadDeviceDetails() {
     infoFirmware.textContent = data.FirmwareVersion || data.FirmwareName || '—';
     infoTuners.textContent = data.TunerCount ? `${data.TunerCount} Tuners` : '—';
     infoIp.textContent = ip;
+    if (labelInfoIp) {
+      const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.includes(':');
+      labelInfoIp.textContent = isIp ? 'IP Address' : 'Hostname';
+    }
 
     // Check for DVR / Storage engine in discover.json
     if (data.StorageURL) {
