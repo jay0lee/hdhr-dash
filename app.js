@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.46';
+const APP_VERSION = '2.0.47';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -562,50 +562,98 @@ async function checkFirmwareUpdate(deviceData) {
 }
 
 function isEpisodeMatchingPlayback(ep, playbackSession) {
-  if (!playbackSession || !playbackSession.name || !ep) return false;
-  const pbName = playbackSession.name.trim().toLowerCase();
+  if (!playbackSession || !playbackSession.name || !ep || !ep.Title) return false;
 
-  // 1. Check title match
-  if (!ep.Title) return false;
-  const epTitle = ep.Title.trim().toLowerCase();
-  if (!pbName.includes(epTitle)) {
+  const clean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanPb = clean(playbackSession.name);
+  const cleanTitle = clean(ep.Title);
+
+  if (!cleanTitle || !cleanPb.includes(cleanTitle)) {
     return false;
   }
 
-  // 2. If episode has EpisodeNumber (e.g. S02E01), check if it matches
-  if (ep.EpisodeNumber) {
-    const epNum = ep.EpisodeNumber.trim().toLowerCase();
-    if (pbName.includes(epNum)) {
+  const cleanEpNum = clean(ep.EpisodeNumber);
+  const cleanEpTitle = clean(ep.EpisodeTitle);
+
+  // 1. If episode has EpisodeNumber (e.g. S02E01)
+  if (cleanEpNum) {
+    if (cleanPb.includes(cleanEpNum)) {
+      return true;
+    }
+    // If playback session name clearly has a different SxxExx episode number, it's definitely not this one
+    const pbEpNumMatch = playbackSession.name.match(/\bS\d+E\d+\b/i);
+    if (pbEpNumMatch && clean(pbEpNumMatch[0]) !== cleanEpNum) {
+      return false;
+    }
+  }
+
+  // 2. If episode has EpisodeTitle (e.g. "Philadelphia Eagles at Tennessee Titans")
+  if (cleanEpTitle) {
+    if (cleanPb.includes(cleanEpTitle)) {
       return true;
     }
   }
 
-  // 3. If episode has EpisodeTitle, check if it matches
-  if (ep.EpisodeTitle) {
-    const epEpTitle = ep.EpisodeTitle.trim().toLowerCase();
-    if (pbName.includes(epEpTitle)) {
-      return true;
-    }
-  }
+  // 3. Check recording dates and timestamps from StartTime and OriginalAirdate
+  const dates = [];
+  const timeStamps = [];
+  [ep.StartTime, ep.OriginalAirdate].forEach((ts) => {
+    if (!ts) return;
+    const d = new Date(ts * 1000);
+    if (isNaN(d.getTime())) return;
 
-  // 4. Check if date string matches (e.g. 20260920)
-  if (ep.StartTime) {
-    const d = new Date(ep.StartTime * 1000);
-    const yyyymmdd = d.getUTCFullYear().toString() +
-      String(d.getUTCMonth() + 1).padStart(2, '0') +
-      String(d.getUTCDate()).padStart(2, '0');
-    if (pbName.includes(yyyymmdd)) {
-      return true;
-    }
-  }
+    // UTC
+    const uY = d.getUTCFullYear();
+    const uM = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const uD = String(d.getUTCDate()).padStart(2, '0');
+    const uH = String(d.getUTCHours()).padStart(2, '0');
+    const uMin = String(d.getUTCMinutes()).padStart(2, '0');
+    dates.push(`${uY}${uM}${uD}`);
+    timeStamps.push(`${uY}${uM}${uD}-${uH}${uMin}`);
 
-  // 5. If ep.Title matched and there's no EpisodeNumber or EpisodeTitle on the episode
-  if (!ep.EpisodeNumber && !ep.EpisodeTitle) {
+    // Local
+    const lY = d.getFullYear();
+    const lM = String(d.getMonth() + 1).padStart(2, '0');
+    const lD = String(d.getDate()).padStart(2, '0');
+    const lH = String(d.getHours()).padStart(2, '0');
+    const lMin = String(d.getMinutes()).padStart(2, '0');
+    dates.push(`${lY}${lM}${lD}`);
+    timeStamps.push(`${lY}${lM}${lD}-${lH}${lMin}`);
+  });
+
+  const hasTimeStampMatch = timeStamps.some((ts) => cleanPb.includes(clean(ts)));
+  if (hasTimeStampMatch) {
     return true;
   }
 
-  // Fallback: if pbName starts with epTitle
-  return pbName.startsWith(epTitle);
+  const hasDateMatch = dates.some((dStr) => cleanPb.includes(dStr));
+  if (hasDateMatch) {
+    // If the episode has an EpisodeTitle, make sure cleanPb doesn't match a completely different episode's title
+    if (!cleanEpTitle || cleanPb.includes(cleanEpTitle)) {
+      return true;
+    }
+    // If cleanEpTitle didn't match, check if another episode of this series actually matches cleanPb's title
+    const otherEpsWithSameTitle = (state.episodes || []).filter((e) => e !== ep && clean(e.Title) === cleanTitle);
+    const anotherEpMatchesTitle = otherEpsWithSameTitle.some((other) => {
+      const oEpTitle = clean(other.EpisodeTitle);
+      return oEpTitle && cleanPb.includes(oEpTitle);
+    });
+    // If another episode's title is explicitly in the playback name, this episode is NOT the one playing!
+    if (!anotherEpMatchesTitle) {
+      return true;
+    }
+  }
+
+  // 4. If there is NO EpisodeNumber, NO EpisodeTitle, and NO Date available on this episode
+  if (!cleanEpNum && !cleanEpTitle && dates.length === 0) {
+    // Only match if this is the only recording for this series title
+    const sameTitleEps = (state.episodes || []).filter((e) => clean(e.Title) === cleanTitle);
+    if (sameTitleEps.length === 1) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function parseDeviceStatus(statusItems, ip) {
