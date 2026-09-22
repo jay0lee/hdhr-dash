@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.34';
+const APP_VERSION = '2.0.35';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -2725,22 +2725,52 @@ async function gatherDiagnostics() {
   }
 
   try {
+    // Check if the device is a RECORD engine (StorageURL or StorageID or state.hasDvr)
+    const isRecordDevice = Boolean(
+      state.hasDvr ||
+      state.dvrStorageUrl ||
+      state.deviceInfo?.StorageURL ||
+      state.deviceInfo?.StorageID
+    );
+
     const dvrUrl = state.dvrStorageUrl
       ? `${state.dvrStorageUrl}/recorded_files.json`
-      : `http://${ip}/recorded_files.json`;
+      : (state.deviceInfo?.StorageURL ? `${state.deviceInfo.StorageURL}/recorded_files.json` : `http://${ip}/recorded_files.json`);
 
-    // Fetch all endpoints concurrently
-    const [discoverRes, statusRes, lineupRes, lineupStatusRes, recordedRes] = await Promise.all([
+    // Base endpoints always expected on any HDHomeRun
+    const endpointPromises = [
       fetchDiagnosticEndpoint(`http://${ip}/discover.json`),
       fetchDiagnosticEndpoint(`http://${ip}/status.json`),
       fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found`),
       fetchDiagnosticEndpoint(`http://${ip}/lineup_status.json`),
-      fetchDiagnosticEndpoint(dvrUrl),
-    ]);
+    ];
+
+    // Only query recorded_files.json if this device is an HDHomeRun RECORD engine
+    if (isRecordDevice) {
+      endpointPromises.push(fetchDiagnosticEndpoint(dvrUrl));
+    }
+
+    const results = await Promise.all(endpointPromises);
+    const discoverRes = results[0];
+    const statusRes = results[1];
+    const lineupRes = results[2];
+    const lineupStatusRes = results[3];
+    const recordedRes = isRecordDevice ? results[4] : null;
 
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
     // Build raw diagnostics bundle
+    const deviceObj = {
+      discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
+      status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
+      lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
+      lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
+    };
+
+    if (isRecordDevice && recordedRes) {
+      deviceObj.recorded_files = recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status };
+    }
+
     const rawBundle = {
       dashboard: {
         app_version: `v${APP_VERSION}`,
@@ -2750,24 +2780,19 @@ async function gatherDiagnostics() {
         active_device_ip: ip,
         active_tab: state.activeTab,
       },
-      device: {
-        discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
-        status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
-        lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
-        lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
-        recorded_files: recordedRes.available
-          ? recordedRes.data
-          : { available: false, error: recordedRes.error, status: recordedRes.status, note: 'DVR storage engine not detected (normal for tuner-only setups)' },
-      },
+      device: deviceObj,
       tuner_history: state.tunerHistory && Object.keys(state.tunerHistory).length > 0 ? state.tunerHistory : null,
     };
 
     state.lastDiagnostics = rawBundle;
 
-    // Distinguish core tuner feeds from optional DVR engine feed
-    const coreFeeds = [discoverRes, statusRes, lineupRes, lineupStatusRes];
-    const coreCount = coreFeeds.filter((f) => f.available).length;
-    const dvrAvailable = recordedRes.available;
+    // Count available feeds vs total expected (4 for standard tuners, 5 for RECORD engines)
+    const allFeeds = [discoverRes, statusRes, lineupRes, lineupStatusRes];
+    if (isRecordDevice && recordedRes) {
+      allFeeds.push(recordedRes);
+    }
+    const availableCount = allFeeds.filter((f) => f.available).length;
+    const totalExpected = allFeeds.length;
 
     renderDiagnosticsOutput();
 
@@ -2785,12 +2810,7 @@ async function gatherDiagnostics() {
       diagStatusBanner.classList.add('success');
       if (diagStatusIcon) diagStatusIcon.textContent = anyActive ? '✅' : '⚠️';
       if (diagStatusText) {
-        let msg = '';
-        if (dvrAvailable) {
-          msg = `Successfully gathered all 5 feeds (4 core tuner feeds + DVR storage).`;
-        } else {
-          msg = `Successfully gathered ${coreCount} of 4 core feeds (discover, status, lineup, scan) • DVR storage feed N/A.`;
-        }
+        let msg = `Successfully gathered ${availableCount} of ${totalExpected} diagnostic feeds from ${ip}.`;
         if (!anyActive) {
           msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
         }
@@ -2845,19 +2865,19 @@ function renderDiagnosticsOutput() {
   const bytes = new Blob([jsonStr]).size;
   const kbSize = (bytes / 1024).toFixed(1);
 
-  const coreKeys = ['discover', 'status', 'lineup', 'lineup_status'];
-  let coreActive = 0;
-  coreKeys.forEach((k) => {
+  const expectedKeys = ['discover', 'status', 'lineup', 'lineup_status'];
+  if (processed.device?.recorded_files !== undefined) {
+    expectedKeys.push('recorded_files');
+  }
+
+  let availableFeeds = 0;
+  expectedKeys.forEach((k) => {
     if (processed.device?.[k] && !processed.device[k].error && processed.device[k].available !== false) {
-      coreActive++;
+      availableFeeds++;
     }
   });
-  const dvrActive = Boolean(
-    processed.device?.recorded_files &&
-    !processed.device.recorded_files.error &&
-    processed.device.recorded_files.available !== false
-  );
-  const feedSummary = dvrActive ? `${coreActive + 1}/5 feeds (incl. DVR)` : `${coreActive}/4 core feeds (DVR N/A)`;
+  const totalFeeds = expectedKeys.length;
+  const feedSummary = `${availableFeeds} of ${totalFeeds} feeds`;
 
   if (diagOutputMeta) {
     diagOutputMeta.textContent = `${kbSize} KB • ${feedSummary} • ${shouldRedact ? 'Auth Redacted' : 'Full (Raw)'}`;
