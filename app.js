@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.35';
+const APP_VERSION = '2.0.36';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -2832,20 +2832,70 @@ async function gatherDiagnostics() {
   }
 }
 
-function processDiagnostics(rawBundle, redactAuth) {
+function anonymizeIp(str) {
+  if (!str || typeof str !== 'string') return str;
+  // Replace IPv4 last octet with NN: e.g. 192.168.1.100 -> 192.168.1.NN
+  return str.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b/g, '$1.NN');
+}
+
+function processDiagnostics(rawBundle, redact) {
   if (!rawBundle) return null;
   const cloned = JSON.parse(JSON.stringify(rawBundle));
-  if (redactAuth) {
+  if (redact) {
+    const redactValue = (val) => {
+      if (typeof val === 'string') {
+        // Anonymize any IPv4 addresses (including within URLs like http://10.1.0.4/lineup.json)
+        let s = anonymizeIp(val);
+
+        // Redact usernames in OS file paths (e.g. /Users/username/ or C:\Users\username\)
+        s = s.replace(/(\/(?:Users|home)\/)[^\/]+/gi, '$1[USER]');
+        s = s.replace(/(C:\\Users\\)[^\\]+/gi, '$1[USER]');
+
+        return s;
+      }
+      return val;
+    };
+
     const redactObject = (obj) => {
       if (!obj || typeof obj !== 'object') return;
       for (const key of Object.keys(obj)) {
-        if (/^deviceauth$/i.test(key)) {
+        const lowerKey = key.toLowerCase();
+
+        // Redact serial numbers, hardware IDs, and cloud authentication tokens
+        if (
+          lowerKey === 'deviceauth' ||
+          lowerKey === 'deviceid' ||
+          lowerKey === 'serial' ||
+          lowerKey === 'serialnumber' ||
+          lowerKey === 'storageid' ||
+          lowerKey === 'mac' ||
+          lowerKey === 'macaddress' ||
+          lowerKey === 'accountid' ||
+          lowerKey === 'accountemail' ||
+          lowerKey === 'email' ||
+          lowerKey === 'usercode' ||
+          lowerKey === 'postalcode' ||
+          lowerKey === 'zipcode' ||
+          lowerKey === 'latitude' ||
+          lowerKey === 'longitude'
+        ) {
           obj[key] = '[REDACTED]';
+        } else if (lowerKey === 'friendlyname') {
+          // Redact user-customized device names that might contain personal names
+          obj[key] = 'HDHomeRun';
+        } else if (lowerKey === 'targetip' || lowerKey === 'ip' || lowerKey === 'active_device_ip') {
+          // Anonymize IP address (e.g. 192.168.1.NN)
+          if (typeof obj[key] === 'string') {
+            obj[key] = anonymizeIp(obj[key]);
+          }
+        } else if (typeof obj[key] === 'string') {
+          obj[key] = redactValue(obj[key]);
         } else if (typeof obj[key] === 'object') {
           redactObject(obj[key]);
         }
       }
     };
+
     redactObject(cloned);
   }
   return cloned;
@@ -2880,7 +2930,7 @@ function renderDiagnosticsOutput() {
   const feedSummary = `${availableFeeds} of ${totalFeeds} feeds`;
 
   if (diagOutputMeta) {
-    diagOutputMeta.textContent = `${kbSize} KB • ${feedSummary} • ${shouldRedact ? 'Auth Redacted' : 'Full (Raw)'}`;
+    diagOutputMeta.textContent = `${kbSize} KB • ${feedSummary} • ${shouldRedact ? 'Anonymized & Redacted' : 'Full (Raw)'}`;
   }
 
   if (diagOutputPre) {
@@ -2943,10 +2993,9 @@ function downloadDiagnosticsJson() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
 
-  const devId = processed.device?.discover?.DeviceID || (state.currentIp ? state.currentIp.replace(/\./g, '-') : 'device');
   const dateStr = new Date().toISOString().replace(/[:.]/g, '-');
   a.href = url;
-  a.download = `hdhr-diagnostics-${devId}-${dateStr}.json`;
+  a.download = `hdhr-diagnostics-${dateStr}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -2965,15 +3014,17 @@ function openGitHubIssue() {
     fullLogsCopied = true;
   }
 
-  const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'} (${dev.DeviceID || ip})`;
+  // Issue title is clean: no serial number, no IP address
+  const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'}`;
 
+  const anonymizedIp = anonymizeIp(ip);
   let body = `### Problem Description\n<!-- Please describe the issue you are experiencing (e.g. signal dropouts, missing channels, tuner error) -->\n\n`;
   body += `### Environment & Diagnostic Summary\n`;
   body += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
-  body += `- **Device Model:** ${dev.ModelNumber || dev.FriendlyName || 'Unknown'}\n`;
-  body += `- **Device ID:** \`${dev.DeviceID || 'Unknown'}\`\n`;
+  body += `- **Device Model:** ${dev.ModelNumber || 'HDHomeRun'}\n`;
+  body += `- **Device ID / Serial:** \`[REDACTED]\`\n`;
   body += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
-  body += `- **Device IP:** \`${ip}\`\n`;
+  body += `- **Device IP:** \`${anonymizedIp}\`\n`;
   body += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
   body += `- **User Agent:** \`${navigator.userAgent}\`\n`;
   body += `- **Active Tuners:** ${state.tuners ? state.tuners.length : 'Unknown'}\n`;
@@ -2996,7 +3047,7 @@ function openGitHubIssue() {
 
   body += `### Diagnostic Logs\n`;
   if (fullLogsCopied) {
-    body += `> 📋 *Full diagnostic logs have been copied to your clipboard. Paste them below if desired:*\n\n\`\`\`json\n\n\`\`\`\n`;
+    body += `> 📋 *Full diagnostic logs have been copied to your clipboard (serials redacted & IPs anonymized). Paste them below if desired:*\n\n\`\`\`json\n\n\`\`\`\n`;
   } else {
     body += `<!-- You can also gather and attach full logs from the System tab -> Diagnostic Logs & Export -->\n`;
   }
@@ -3016,7 +3067,7 @@ function openGitHubIssue() {
     if (diagStatusBanner && diagStatusText) {
       diagStatusBanner.className = 'diag-status-banner success';
       diagStatusBanner.classList.remove('hidden');
-      diagStatusText.textContent = 'Opening GitHub... Full diagnostic logs copied to clipboard to paste into your issue!';
+      diagStatusText.textContent = 'Opening GitHub... Full diagnostic logs copied to clipboard (anonymized) to paste into your issue!';
     }
   }
 
