@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.62';
+const APP_VERSION = '2.0.63';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -3418,6 +3418,12 @@ function renderRules(rulesList) {
     return;
   }
 
+  const validPriorities = rulesList
+    .map((r) => r.Priority)
+    .filter((p) => typeof p === 'number' && !isNaN(p));
+  const maxPriority = validPriorities.length > 1 ? Math.max(...validPriorities) : null;
+  const minPriority = validPriorities.length > 1 ? Math.min(...validPriorities) : null;
+
   recordingsContainer.innerHTML = '';
   rulesList.forEach((r) => {
     const card = document.createElement('div');
@@ -3431,13 +3437,26 @@ function renderRules(rulesList) {
       criteriaBadge = `<span class="badge badge-hd">📺 Channel: ${r.ChannelOnly}</span>`;
     }
 
+    let priorityBadge = '';
+    if (typeof r.Priority === 'number') {
+      let qualifier = '';
+      if (maxPriority !== null && minPriority !== null && maxPriority !== minPriority) {
+        if (r.Priority === maxPriority) {
+          qualifier = ' (highest)';
+        } else if (r.Priority === minPriority) {
+          qualifier = ' (lowest)';
+        }
+      }
+      priorityBadge = `<span class="rule-priority-badge" title="Scheduling Priority: higher numbers take precedence in HDHomeRun DVR conflicts">Priority ${r.Priority}${qualifier}</span>`;
+    }
+
     card.innerHTML = `
       <div class="recording-top">
         <img src="${posterUrl}" class="recording-poster" alt="${r.Title || 'Rule'}" loading="lazy" onerror="this.src='icon.svg'" />
         <div class="recording-body">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
             <h4 class="recording-title">${r.Title || 'Recording Rule'}</h4>
-            ${r.Priority ? `<span class="rule-priority-badge">Priority ${r.Priority}</span>` : ''}
+            ${priorityBadge}
           </div>
           ${criteriaBadge ? `<div class="mt-6">${criteriaBadge}</div>` : ''}
           ${r.Synopsis ? `<p class="recording-synopsis" title="${r.Synopsis}">${r.Synopsis}</p>` : ''}
