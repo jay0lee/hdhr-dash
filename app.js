@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.50';
+const APP_VERSION = '2.0.51';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -252,7 +252,7 @@ function getStationInfo(guideName) {
     baseCall: base,
     locality,
     network,
-    logo: NETWORK_LOGOS[network] || null,
+    logo: (network && NETWORK_LOGOS[network]) || null,
   };
 }
 
@@ -1205,8 +1205,10 @@ function renderTuners(statusItems) {
       if (stationInfo) {
         if (stationInfo.logo) {
           logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
-        } else {
+        } else if (stationInfo.network) {
           logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
+        } else {
+          logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
         }
         if (stationInfo.locality) {
           localityHtml = `<span class="tuner-locality text-xs text-muted">(${stationInfo.locality})</span>`;
@@ -1563,16 +1565,14 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
 
     if (stationInfo && stationInfo.logo) {
       logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
-      if (stationInfo.locality) {
-        localityText = `(${stationInfo.locality})`;
-      }
     } else if (stationInfo && stationInfo.network) {
       logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
-      if (stationInfo.locality) {
-        localityText = `(${stationInfo.locality})`;
-      }
     } else {
       logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
+    }
+
+    if (stationInfo && stationInfo.locality) {
+      localityText = `(${stationInfo.locality})`;
     }
 
     if (detailChannelLogo) detailChannelLogo.innerHTML = logoHtml;
@@ -2269,16 +2269,14 @@ function renderLineup() {
 
     if (stationInfo && stationInfo.logo) {
       logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
-      if (stationInfo.locality) {
-        localityHtml = `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>`;
-      }
     } else if (stationInfo && stationInfo.network) {
       logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
-      if (stationInfo.locality) {
-        localityHtml = `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>`;
-      }
     } else {
       logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
+    }
+
+    if (stationInfo && stationInfo.locality) {
+      localityHtml = `<span class="channel-locality text-xs text-muted">${stationInfo.locality}</span>`;
     }
 
     const channelNameHtml = `
@@ -3582,7 +3580,13 @@ function openGitHubIssue() {
         const station = getStationInfo(t.VctName || t.Vchannel);
         let stationMeta = '';
         if (station) {
-          stationMeta = ` [${station.network} • ${station.locality}]`;
+          if (station.network && station.locality) {
+            stationMeta = ` [${station.network} • ${station.locality}]`;
+          } else if (station.network) {
+            stationMeta = ` [${station.network}]`;
+          } else if (station.locality) {
+            stationMeta = ` [${station.locality}]`;
+          }
         }
         const channelDisplay = t.VctNumber
           ? `${t.VctNumber}${t.VctName ? ` (${t.VctName}${stationMeta})` : stationMeta}`

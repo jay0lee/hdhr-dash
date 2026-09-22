@@ -3,7 +3,14 @@
   "WTXF": ["Philadelphia, PA", "FOX"],
   "KYW": ["Philadelphia, PA", "CBS"],
   "WCAU": ["Philadelphia, PA", "NBC"],
-  "WPSG": ["Philadelphia, PA", "CW"],
+  "WPSG": ["Philadelphia, PA", ""],
   "WPHL": ["Philadelphia, PA", "CW"],
-  "WHYY": ["Philadelphia, PA", "PBS"]
+  "WHYY": ["Philadelphia, PA", "PBS"],
+  "WPKD": ["Pittsburgh, PA", ""],
+  "WPCW": ["Pittsburgh, PA", ""],
+  "KMAX": ["Sacramento, CA", ""],
+  "KPYX": ["San Francisco, CA", ""],
+  "KBCW": ["San Francisco, CA", ""],
+  "KSTW": ["Seattle, WA", ""],
+  "WTOG": ["Tampa, FL", ""]
 }
