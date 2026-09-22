@@ -7,8 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.52';
+const APP_VERSION = '2.0.53';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -30,7 +29,7 @@ document.documentElement.setAttribute('data-theme', initialTheme);
 
 // Application State
 const state = {
-  currentIp: localStorage.getItem(STORAGE_ACTIVE_IP) || DEFAULT_IP,
+  currentIp: localStorage.getItem(STORAGE_ACTIVE_IP) || null,
   devices: JSON.parse(localStorage.getItem(STORAGE_DEVICES) || '[]'),
   deviceInfo: null,
   tuners: [],
@@ -207,8 +206,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Populate device dropdown
   renderDeviceDropdown();
 
-  // Initial load
-  await loadDeviceDetails();
+  // Initial load & discovery
+  await initDeviceConnection();
   await refreshActiveTab();
 
   // Start polling
@@ -462,11 +461,21 @@ async function refreshActiveTab() {
 function renderDeviceDropdown() {
   deviceSelect.innerHTML = '';
 
-  // Ensure current IP is in list
-  const allIps = new Set([state.currentIp, ...state.devices.map((d) => d.ip || d.LocalIP)]);
+  const validIps = [
+    ...(state.currentIp ? [state.currentIp] : []),
+    ...state.devices.map((d) => d.ip || d.LocalIP).filter(Boolean)
+  ];
+  const allIps = Array.from(new Set(validIps));
+
+  if (allIps.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'No Device Connected';
+    deviceSelect.appendChild(opt);
+    return;
+  }
 
   allIps.forEach((ip) => {
-    if (!ip) return;
     const dev = state.devices.find((d) => (d.ip || d.LocalIP) === ip);
     const label = dev?.ModelNumber ? `${dev.ModelNumber} (${ip})` : `HDHomeRun (${ip})`;
     const opt = document.createElement('option');
@@ -477,11 +486,14 @@ function renderDeviceDropdown() {
   });
 
   deviceSelect.onchange = async () => {
-    await switchDevice(deviceSelect.value);
+    if (deviceSelect.value) {
+      await switchDevice(deviceSelect.value);
+    }
   };
 }
 
 async function switchDevice(newIp) {
+  if (!newIp) return;
   state.currentIp = newIp;
   localStorage.setItem(STORAGE_ACTIVE_IP, newIp);
   state.lineup = [];
@@ -490,12 +502,29 @@ async function switchDevice(newIp) {
   state.dvrStorageUrl = null;
 
   hideAlert();
+  const noticeEl = document.getElementById('no-device-notice');
+  if (noticeEl) noticeEl.classList.add('hidden');
+
   await loadDeviceDetails();
   await refreshActiveTab();
 }
 
 async function loadDeviceDetails() {
   const ip = state.currentIp;
+  if (!ip) {
+    connectionDot.className = 'status-dot disconnected';
+    infoModel.textContent = '—';
+    infoId.textContent = '—';
+    infoFirmware.textContent = '—';
+    infoTuners.textContent = '—';
+    infoIp.textContent = '—';
+    if (typeof infoActiveClients !== 'undefined' && infoActiveClients) infoActiveClients.textContent = '—';
+    if (typeof infoActiveRecordings !== 'undefined' && infoActiveRecordings) infoActiveRecordings.textContent = '—';
+    if (typeof infoStorageUsed !== 'undefined' && infoStorageUsed) infoStorageUsed.textContent = '—';
+    if (typeof infoChannelsCount !== 'undefined' && infoChannelsCount) infoChannelsCount.textContent = '—';
+    return false;
+  }
+
   try {
     const res = await fetch(`http://${ip}/discover.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -533,10 +562,12 @@ async function loadDeviceDetails() {
 
     // Check for firmware updates
     checkFirmwareUpdate(data);
+    return true;
   } catch (err) {
     console.warn('Could not load discover.json:', err);
     connectionDot.className = 'status-dot error';
     showAlert(`Unable to connect to HDHomeRun at <code>${ip}</code>. Check your network or permissions.`, 'error');
+    return false;
   }
 }
 
@@ -781,6 +812,7 @@ function parseDeviceStatus(statusItems, ip) {
 
 async function updateSystemLiveStatus() {
   const ip = state.currentIp;
+  if (!ip) return;
   try {
     // 1. Fetch status.json for live tuner and session info
     let statusItems = [];
@@ -926,7 +958,7 @@ async function loadChannelsCount() {
 async function discoverCloudDevices() {
   try {
     const res = await fetch('https://api.hdhomerun.com/discover');
-    if (!res.ok) return;
+    if (!res.ok) return [];
     const list = await res.json();
 
     if (Array.isArray(list) && list.length > 0) {
@@ -940,10 +972,64 @@ async function discoverCloudDevices() {
       });
       renderDeviceDropdown();
       renderDiscoveredList();
+      return list;
     }
+    return [];
   } catch (e) {
     console.log('Cloud discovery skipped or offline:', e.message);
+    return [];
   }
+}
+
+function goToManualIpEntry() {
+  connectionDot.className = 'status-dot disconnected';
+  renderDeviceDropdown();
+  const noticeEl = document.getElementById('no-device-notice');
+  if (noticeEl) noticeEl.classList.remove('hidden');
+  switchTab('system');
+  setTimeout(() => {
+    if (inputCustomIp) {
+      inputCustomIp.focus();
+      inputCustomIp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, 200);
+}
+
+async function initDeviceConnection() {
+  let connected = false;
+
+  // 1. Try saved IP if present
+  if (state.currentIp) {
+    connected = await loadDeviceDetails();
+    if (connected) {
+      const noticeEl = document.getElementById('no-device-notice');
+      if (noticeEl) noticeEl.classList.add('hidden');
+      // Background cloud discovery to find other devices on network
+      discoverCloudDevices().catch(() => {});
+      return;
+    }
+  }
+
+  // 2. If no saved IP or saved IP failed, run cloud discovery
+  const discovered = await discoverCloudDevices();
+  if (discovered && discovered.length > 0) {
+    const primaryDev = discovered[0];
+    const ip = primaryDev.LocalIP || primaryDev.ip;
+    if (ip) {
+      state.currentIp = ip;
+      localStorage.setItem(STORAGE_ACTIVE_IP, ip);
+      renderDeviceDropdown();
+      connected = await loadDeviceDetails();
+      if (connected) {
+        const noticeEl = document.getElementById('no-device-notice');
+        if (noticeEl) noticeEl.classList.add('hidden');
+        return;
+      }
+    }
+  }
+
+  // 3. Neither worked: go to manual IP entry
+  goToManualIpEntry();
 }
 
 function saveDevice(dev) {
@@ -964,6 +1050,12 @@ function setupDeviceManagement() {
       saveDevice({ ip });
       renderDeviceDropdown();
       switchDevice(ip);
+    }
+  });
+
+  inputCustomIp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      btnAddDevice.click();
     }
   });
 
@@ -988,14 +1080,22 @@ function setupDeviceManagement() {
   const btnSystemLog = document.getElementById('btn-system-log');
   if (btnSystemLog) {
     btnSystemLog.addEventListener('click', () => {
-      window.open(`http://${state.currentIp || DEFAULT_IP}/log.html`, '_blank');
+      if (state.currentIp) {
+        window.open(`http://${state.currentIp}/log.html`, '_blank');
+      } else {
+        showAlert('No device connected. Please enter a device IP above.', 'warning');
+      }
     });
   }
 
   const btnRebootCheck = document.getElementById('btn-reboot-check');
   if (btnRebootCheck) {
     btnRebootCheck.addEventListener('click', () => {
-      window.open(`http://${state.currentIp || DEFAULT_IP}`, '_blank');
+      if (state.currentIp) {
+        window.open(`http://${state.currentIp}`, '_blank');
+      } else {
+        showAlert('No device connected. Please enter a device IP above.', 'warning');
+      }
     });
   }
 
@@ -1062,6 +1162,16 @@ function renderDiscoveredList() {
 
 async function fetchTuners() {
   const ip = state.currentIp;
+  if (!ip) {
+    tunersGrid.innerHTML = `
+      <div class="empty-state">
+        <p>No HDHomeRun device connected.</p>
+        <p class="text-sm text-muted">Please configure a device IP on the <a href="#system" onclick="switchTab('system'); return false;">System</a> tab.</p>
+      </div>`;
+    tunerSummaryBadge.textContent = 'Disconnected';
+    tunerSummaryBadge.className = 'badge';
+    return;
+  }
   try {
     if (state.hasDvr && state.episodes.length === 0) {
       fetchRecordings(true);
@@ -1875,8 +1985,8 @@ function startPolling() {
   if (!state.isPolling || state.pollInterval <= 0) return;
 
   state.pollTimer = setInterval(() => {
-    // Only poll actively if the tab is visible
-    if (document.visibilityState === 'visible') {
+    // Only poll actively if the tab is visible and a device is connected
+    if (document.visibilityState === 'visible' && state.currentIp) {
       if (state.activeTab === 'tuners') {
         fetchTuners();
       } else if (state.activeTab === 'system') {
@@ -1899,6 +2009,7 @@ function stopPolling() {
 
 async function updateRecordingsLiveStatus() {
   const ip = state.currentIp;
+  if (!ip) return;
   try {
     const statusRes = await fetch(`http://${ip}/status.json`);
     if (!statusRes.ok) return;
@@ -1914,6 +2025,7 @@ async function updateRecordingsLiveStatus() {
 
 async function updateLineupLiveStatus() {
   const ip = state.currentIp;
+  if (!ip) return;
   try {
     const statusRes = await fetch(`http://${ip}/status.json`);
     if (!statusRes.ok) return;
@@ -2092,6 +2204,10 @@ function updateLineupStats() {
 
 async function fetchLineup() {
   const ip = state.currentIp;
+  if (!ip) {
+    lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No HDHomeRun device connected. Please configure a device IP on the <a href="#system" onclick="switchTab(\'system\'); return false;">System</a> tab.</td></tr>';
+    return;
+  }
   lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
 
   try {
@@ -2409,6 +2525,16 @@ function updateStorageBar() {
 
 async function fetchRecordings(isBackground = false) {
   const ip = state.currentIp;
+  if (!ip) {
+    if (!isBackground) {
+      recordingsContainer.innerHTML = `
+        <div class="empty-state">
+          <p>No HDHomeRun device connected.</p>
+          <p class="text-sm text-muted">Please configure a device IP on the <a href="#system" onclick="switchTab('system'); return false;">System</a> tab.</p>
+        </div>`;
+    }
+    return;
+  }
   if (!isBackground) {
     recordingsContainer.innerHTML = '<div class="loading-placeholder">Loading DVR recordings and rules...</div>';
   }
@@ -3358,7 +3484,7 @@ function processDiagnostics(rawBundle, redact) {
   if (redact) {
     const redactValue = (val) => {
       if (typeof val === 'string') {
-        // Anonymize any IPv4 addresses (including within URLs like http://10.1.0.4/lineup.json)
+        // Anonymize any IPv4 addresses (including within URLs like http://192.168.1.100/lineup.json)
         let s = anonymizeIp(val);
 
         // Redact usernames in OS file paths (e.g. /Users/username/ or C:\Users\username\)
