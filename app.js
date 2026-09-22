@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.56';
+const APP_VERSION = '2.0.57';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -73,6 +73,8 @@ const globalAlert = document.getElementById('global-alert');
 const btnInstall = document.getElementById('btn-install');
 const navTabs = document.querySelectorAll('.nav-tab');
 const tabViews = document.querySelectorAll('.tab-view');
+const themeSelect = document.getElementById('theme-select');
+const prefThemeSelect = document.getElementById('pref-theme-select');
 
 // Tuner Elements
 const tunersOverview = document.getElementById('tuners-overview');
@@ -114,7 +116,6 @@ const statAvgSymbol = document.getElementById('stat-avg-symbol');
 const statMaxSymbol = document.getElementById('stat-max-symbol');
 
 const chartSampleCount = document.getElementById('chart-sample-count');
-const chartLegend = document.getElementById('chart-legend');
 const chartContainer = document.getElementById('chart-container');
 const tunerChartSvg = document.getElementById('tuner-chart-svg');
 const chartGridGroup = document.getElementById('chart-grid-group');
@@ -150,7 +151,6 @@ const btnRecheckDvr = document.getElementById('btn-recheck-dvr');
 const dvrStorageBarCard = document.getElementById('dvr-storage-bar-card');
 const storageSpaceText = document.getElementById('storage-space-text');
 const storageBarFill = document.getElementById('storage-bar-fill');
-const dvrFilterBar = document.getElementById('dvr-filter-bar');
 const dvrViewPills = document.querySelectorAll('#dvr-view-pills .pill');
 const seriesCountPill = document.getElementById('series-count-pill');
 const episodesCountPill = document.getElementById('episodes-count-pill');
@@ -263,14 +263,12 @@ function setupTheme() {
   const savedTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
   applyTheme(savedTheme);
 
-  const themeSelect = document.getElementById('theme-select');
   if (themeSelect) {
     themeSelect.addEventListener('change', (e) => {
       applyTheme(e.target.value);
     });
   }
 
-  const prefThemeSelect = document.getElementById('pref-theme-select');
   if (prefThemeSelect) {
     prefThemeSelect.addEventListener('change', (e) => {
       applyTheme(e.target.value);
@@ -282,12 +280,10 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem(STORAGE_THEME, theme);
 
-  const themeSelect = document.getElementById('theme-select');
   if (themeSelect && themeSelect.value !== theme) {
     themeSelect.value = theme;
   }
 
-  const prefThemeSelect = document.getElementById('pref-theme-select');
   if (prefThemeSelect && prefThemeSelect.value !== theme) {
     prefThemeSelect.value = theme;
   }
@@ -520,10 +516,11 @@ async function loadDeviceDetails() {
     infoTuners.textContent = '—';
     infoIp.textContent = '—';
     if (labelInfoIp) labelInfoIp.textContent = 'Hostname / IP';
-    if (typeof infoActiveClients !== 'undefined' && infoActiveClients) infoActiveClients.textContent = '—';
-    if (typeof infoActiveRecordings !== 'undefined' && infoActiveRecordings) infoActiveRecordings.textContent = '—';
-    if (typeof infoStorageUsed !== 'undefined' && infoStorageUsed) infoStorageUsed.textContent = '—';
-    if (typeof infoChannelsCount !== 'undefined' && infoChannelsCount) infoChannelsCount.textContent = '—';
+    if (infoActiveClients) infoActiveClients.textContent = '—';
+    if (infoActiveRecordings) infoActiveRecordings.textContent = '—';
+    if (infoStorage) infoStorage.textContent = '—';
+    if (infoStorageBarWrap) infoStorageBarWrap.classList.add('hidden');
+    if (infoChannels) infoChannels.textContent = '—';
     return false;
   }
 
@@ -2646,6 +2643,14 @@ function updateStorageBar() {
   }
 }
 
+function getDvrRecordedFilesUrl(ip) {
+  let targetUrl = state.dvrStorageUrl || state.deviceInfo?.StorageURL || (ip ? `http://${ip}/recorded_files.json` : '');
+  if (targetUrl && !targetUrl.includes('.json')) {
+    targetUrl = targetUrl.replace(/\/+$/, '') + '/recorded_files.json';
+  }
+  return targetUrl;
+}
+
 async function fetchRecordings(isBackground = false) {
   const ip = state.currentIp;
   if (!ip) {
@@ -2663,11 +2668,7 @@ async function fetchRecordings(isBackground = false) {
   }
   dvrNotDetected.classList.add('hidden');
 
-  // Correctly determine storage URL: do NOT duplicate /recorded_files.json
-  let targetUrl = state.dvrStorageUrl || `http://${ip}/recorded_files.json`;
-  if (!targetUrl.includes('.json')) {
-    targetUrl = targetUrl.replace(/\/+$/, '') + '/recorded_files.json';
-  }
+  let targetUrl = getDvrRecordedFilesUrl(ip);
 
   try {
     let res = await fetch(targetUrl);
@@ -3496,9 +3497,7 @@ async function gatherDiagnostics() {
       state.deviceInfo?.StorageID
     );
 
-    const dvrUrl = state.dvrStorageUrl
-      ? `${state.dvrStorageUrl}/recorded_files.json`
-      : (state.deviceInfo?.StorageURL ? `${state.deviceInfo.StorageURL}/recorded_files.json` : `http://${ip}/recorded_files.json`);
+    const dvrUrl = getDvrRecordedFilesUrl(ip);
 
     // Base endpoints always expected on any HDHomeRun
     const endpointPromises = [
