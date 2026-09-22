@@ -1197,10 +1197,71 @@ body {
   border: 1px solid var(--border-main);
   border-radius: var(--radius-sm);
   font-size: 0.88rem;
+  gap: 12px;
 }
 
 .device-item.active {
   border-color: var(--accent-cyan);
+}
+
+.device-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.device-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.device-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.badge-auto {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+
+.badge-manual {
+  background-color: rgba(167, 139, 250, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+
+.badge-btn {
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+  line-height: 1.3;
+}
+
+.badge-btn:hover {
+  opacity: 0.85;
+  transform: scale(1.04);
+}
+
+[data-theme="light"] .badge-auto {
+  background-color: #e0f2fe;
+  color: #0284c7;
+  border-color: #bae6fd;
+}
+
+[data-theme="light"] .badge-manual {
+  background-color: #ede9fe;
+  color: #7c3aed;
+  border-color: #ddd6fe;
 }
 
 .ip-input-row {

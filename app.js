@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.54';
+const APP_VERSION = '2.0.55';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -977,6 +977,7 @@ async function discoverLocalMdns() {
         ModelNumber: data.ModelNumber,
         DeviceID: data.DeviceID,
         StorageURL: data.StorageURL,
+        source: 'auto',
       };
       saveDevice(dev);
       renderDeviceDropdown();
@@ -1002,6 +1003,7 @@ async function discoverCloudDevices() {
           ModelNumber: dev.ModelNumber,
           DeviceID: dev.DeviceID,
           StorageURL: dev.StorageURL,
+          source: 'auto',
         });
       });
       renderDeviceDropdown();
@@ -1082,11 +1084,22 @@ async function initDeviceConnection() {
 }
 
 function saveDevice(dev) {
-  const idx = state.devices.findIndex((d) => (d.ip || d.LocalIP) === dev.ip);
+  const ip = dev.ip || dev.LocalIP;
+  if (!ip) return;
+  const idx = state.devices.findIndex((d) => (d.ip || d.LocalIP) === ip);
+  const defaultSource = ip.includes('.local') ? 'auto' : 'manual';
   if (idx >= 0) {
-    state.devices[idx] = { ...state.devices[idx], ...dev };
+    const existing = state.devices[idx];
+    state.devices[idx] = {
+      ...existing,
+      ...dev,
+      source: dev.source || existing.source || defaultSource,
+    };
   } else {
-    state.devices.push(dev);
+    state.devices.push({
+      ...dev,
+      source: dev.source || defaultSource,
+    });
   }
   localStorage.setItem(STORAGE_DEVICES, JSON.stringify(state.devices));
 }
@@ -1096,7 +1109,7 @@ function setupDeviceManagement() {
     const ip = inputCustomIp.value.trim();
     if (ip) {
       inputCustomIp.value = '';
-      saveDevice({ ip });
+      saveDevice({ ip, source: 'manual' });
       renderDeviceDropdown();
       switchDevice(ip);
     }
@@ -1170,26 +1183,33 @@ function setupDeviceManagement() {
 function renderDiscoveredList() {
   discoveredDevicesList.innerHTML = '';
   if (state.devices.length === 0) {
-    discoveredDevicesList.innerHTML = '<p class="text-sm text-muted">No other devices found.</p>';
+    discoveredDevicesList.innerHTML = '<p class="text-sm text-muted">No saved or discovered devices.</p>';
     return;
   }
 
   state.devices.forEach((d) => {
     const ip = d.ip || d.LocalIP;
+    const isAuto = d.source === 'auto' || (!d.source && ip && ip.includes('.local'));
     const item = document.createElement('div');
     item.className = `device-item ${ip === state.currentIp ? 'active' : ''}`;
     item.innerHTML = `
-      <div>
-        <strong>${d.ModelNumber || 'HDHomeRun'}</strong>
+      <div class="device-item-info">
+        <div class="device-item-header">
+          <strong>${d.ModelNumber || 'HDHomeRun'}</strong>
+          <button type="button" class="badge badge-btn ${isAuto ? 'badge-auto' : 'badge-manual'} btn-toggle-source" data-ip="${ip}" title="Click to toggle Auto / Manual note">
+            ${isAuto ? 'Auto' : 'Manual'}
+          </button>
+        </div>
         <span class="text-sm text-muted">(${ip})</span>
         ${d.DeviceID ? `<div class="text-sm font-mono text-muted">${d.DeviceID}</div>` : ''}
       </div>
-      <div>
+      <div class="device-item-actions">
         ${
           ip === state.currentIp
-            ? '<span class="badge">Active</span>'
+            ? '<span class="badge badge-active">Active</span>'
             : `<button class="btn btn-sm btn-secondary btn-switch-ip" data-ip="${ip}">Switch</button>`
         }
+        <button class="btn btn-sm btn-delete btn-forget-device" data-ip="${ip}" title="Remove device from saved list">Forget</button>
       </div>
     `;
     discoveredDevicesList.appendChild(item);
@@ -1203,6 +1223,54 @@ function renderDiscoveredList() {
       renderDiscoveredList();
     });
   });
+
+  document.querySelectorAll('.btn-toggle-source').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ip = btn.getAttribute('data-ip');
+      toggleDeviceSource(ip);
+    });
+  });
+
+  document.querySelectorAll('.btn-forget-device').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ip = btn.getAttribute('data-ip');
+      forgetDevice(ip);
+    });
+  });
+}
+
+function toggleDeviceSource(targetIp) {
+  const dev = state.devices.find((d) => (d.ip || d.LocalIP) === targetIp);
+  if (!dev) return;
+  const currentIsAuto = dev.source === 'auto' || (!dev.source && targetIp.includes('.local'));
+  dev.source = currentIsAuto ? 'manual' : 'auto';
+  localStorage.setItem(STORAGE_DEVICES, JSON.stringify(state.devices));
+  renderDiscoveredList();
+}
+
+async function forgetDevice(targetIp) {
+  const dev = state.devices.find((d) => (d.ip || d.LocalIP) === targetIp);
+  const label = dev?.ModelNumber ? `${dev.ModelNumber} (${targetIp})` : targetIp;
+  if (!confirm(`Forget device "${label}"?`)) return;
+
+  state.devices = state.devices.filter((d) => (d.ip || d.LocalIP) !== targetIp);
+  localStorage.setItem(STORAGE_DEVICES, JSON.stringify(state.devices));
+
+  if (targetIp === state.currentIp) {
+    if (state.devices.length > 0) {
+      const nextIp = state.devices[0].ip || state.devices[0].LocalIP;
+      await switchDevice(nextIp);
+    } else {
+      state.currentIp = null;
+      localStorage.removeItem(STORAGE_ACTIVE_IP);
+      renderDeviceDropdown();
+      renderDiscoveredList();
+      goToManualIpEntry();
+    }
+  } else {
+    renderDeviceDropdown();
+    renderDiscoveredList();
+  }
 }
 
 /* ==========================================================================
