@@ -1,9 +1,9 @@
-const CACHE_NAME = 'hdhr-dash-v60';
+const CACHE_NAME = 'hdhr-dash-v61';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.0.57',
-  './app.js?v=2.0.57',
+  './style.css?v=2.0.58',
+  './app.js?v=2.0.58',
   './stations.json',
   './assets/logos/generic-tv.svg',
   './assets/logos/abc.svg',

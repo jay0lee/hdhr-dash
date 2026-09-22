@@ -16,7 +16,7 @@
     .tab-view.active { display: block !important; }
     .hidden { display: none !important; }
   </style>
-  <link rel="stylesheet" href="style.css?v=2.0.57" />
+  <link rel="stylesheet" href="style.css?v=2.0.58" />
 </head>
 <body>
   <div class="app-shell">
@@ -144,6 +144,7 @@
                     <span id="detail-channel-locality" class="detail-channel-locality text-xs text-muted"></span>
                   </div>
                   <span id="detail-channel-number" class="detail-channel-number"></span>
+                  <span id="detail-channel-band" class="detail-channel-band"></span>
                 </div>
               </div>
               <div class="detail-tuner-meta">
@@ -322,30 +323,81 @@
 
         <div class="filter-bar">
           <input type="text" id="lineup-search" placeholder="Search channels by name or number (e.g. 5.1, NBC)..." />
-          <div class="filter-pills" id="lineup-filter-pills">
-            <button class="pill active" data-filter="allowed">
-              Allowed <span id="lineup-allowed-pill" class="badge-pill">0</span>
+          <div class="filter-dropdown-container">
+            <button id="btn-lineup-filters" class="btn btn-secondary filter-toggle-btn" type="button" aria-expanded="false" title="Filter channels by status, band, format, and DRM">
+              <span class="filter-btn-icon">⚡</span>
+              <span>Filters</span>
+              <span id="lineup-filter-active-count" class="badge-pill filter-count-badge hidden">0</span>
+              <span class="dropdown-caret">▾</span>
             </button>
-            <button class="pill" data-filter="all">
-              All <span id="lineup-all-pill" class="badge-pill">0</span>
-            </button>
-            <button class="pill" data-filter="favorites">
-              Favorites ⭐ <span id="lineup-fav-pill" class="badge-pill">0</span>
-            </button>
-            <button class="pill" data-filter="atsc3">
-              ATSC3 <span id="lineup-atsc3-pill" class="badge-pill">0</span>
-            </button>
-            <button class="pill" data-filter="drm">
-              DRM 🔒 <span id="lineup-drm-pill" class="badge-pill">0</span>
-            </button>
-            <button class="pill" data-filter="hd">
-              HD Only <span id="lineup-hd-pill" class="badge-pill">0</span>
-            </button>
-            <button class="pill" data-filter="hidden">
-              Hidden ❌ <span id="lineup-hidden-pill" class="badge-pill">0</span>
-            </button>
+
+            <div id="lineup-filter-menu" class="filter-dropdown-menu hidden">
+              <div class="filter-menu-header">
+                <span class="filter-menu-title">Filter Channels</span>
+                <button type="button" id="btn-reset-filters" class="btn-text-action" title="Reset all filters to default">Reset</button>
+              </div>
+
+              <div class="filter-menu-body">
+                <!-- Status Filter -->
+                <div class="filter-menu-row">
+                  <label class="filter-menu-label" for="filter-status-select">Status</label>
+                  <select id="filter-status-select" class="filter-menu-select">
+                    <option value="allowed" selected>Allowed Only</option>
+                    <option value="all">All Channels</option>
+                    <option value="favorites">Favorites ⭐</option>
+                    <option value="hidden">Hidden ❌</option>
+                  </select>
+                </div>
+
+                <!-- Band Filter -->
+                <div class="filter-menu-row">
+                  <label class="filter-menu-label" for="filter-band-select">Band (Frequency)</label>
+                  <select id="filter-band-select" class="filter-menu-select">
+                    <option value="all" selected>All Bands</option>
+                    <option value="vhf">VHF Only (Low & High)</option>
+                    <option value="vhf-low">VHF-Low (RF 2–6)</option>
+                    <option value="vhf-high">VHF-High (RF 7–13)</option>
+                    <option value="uhf">UHF Only (RF 14+)</option>
+                  </select>
+                </div>
+
+                <!-- Standard / Format Filter -->
+                <div class="filter-menu-row">
+                  <label class="filter-menu-label" for="filter-format-select">Format</label>
+                  <select id="filter-format-select" class="filter-menu-select">
+                    <option value="all" selected>All Formats</option>
+                    <option value="atsc3">ATSC 3.0 (NextGen TV)</option>
+                    <option value="atsc1">ATSC 1.0 (Standard Digital)</option>
+                    <option value="hd">HD Only</option>
+                    <option value="sd">SD Only</option>
+                  </select>
+                </div>
+
+                <!-- DRM Filter -->
+                <div class="filter-menu-row">
+                  <label class="filter-menu-label" for="filter-drm-select">DRM Protection</label>
+                  <select id="filter-drm-select" class="filter-menu-select">
+                    <option value="all" selected>All Channels</option>
+                    <option value="drm">DRM Protected 🔒</option>
+                    <option value="nodrm">Clear / No DRM</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="filter-menu-footer">
+                <button type="button" id="btn-clear-filters" class="btn btn-secondary btn-sm">Clear All</button>
+                <button type="button" id="btn-apply-filters" class="btn btn-primary btn-sm">Done</button>
+              </div>
+            </div>
           </div>
+
+          <button id="btn-quick-clear-filters" class="btn btn-secondary btn-sm hidden" title="Clear all active filters">
+            ✕ Clear Filters
+          </button>
         </div>
+
+        <!-- Active Filter Chips Row -->
+        <div id="lineup-active-chips" class="active-filter-chips hidden"></div>
 
         <div class="lineup-table-wrapper">
           <table class="lineup-table">
@@ -619,13 +671,13 @@
           <div class="card">
             <div class="card-header-with-actions">
               <h3>About HDHR Dash</h3>
-              <span id="app-version-badge" class="badge badge-hd">v2.0.57</span>
+              <span id="app-version-badge" class="badge badge-hd">v2.0.58</span>
             </div>
             <p class="text-sm text-muted mb-12">Lightweight, zero-dependency web dashboard for SiliconDust HDHomeRun tuners.</p>
             <div class="info-list">
               <div class="info-row">
                 <span class="info-label">Application Version</span>
-                <span id="info-app-version" class="info-val font-mono">v2.0.57</span>
+                <span id="info-app-version" class="info-val font-mono">v2.0.58</span>
               </div>
               <div class="info-row">
                 <span class="info-label">PWA Mode</span>
@@ -675,6 +727,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2.0.57"></script>
+  <script src="app.js?v=2.0.58"></script>
 </body>
 </html>

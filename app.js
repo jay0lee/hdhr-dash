@@ -7,7 +7,50 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.57';
+const APP_VERSION = '2.0.58';
+
+/**
+ * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
+ * based on standard ATSC broadcast frequency (in Hz).
+ */
+function getRfChannelInfo(freq) {
+  if (!freq || typeof freq !== 'number') return null;
+  const fMhz = freq / 1e6;
+  let band = 'UHF';
+  let bandDetail = 'UHF';
+  let rf = null;
+
+  if (fMhz >= 54 && fMhz < 72) {
+    rf = 2 + Math.round((fMhz - 57) / 6);
+    band = 'VHF';
+    bandDetail = 'VHF-Low';
+  } else if (fMhz >= 76 && fMhz < 88) {
+    rf = 5 + Math.round((fMhz - 79) / 6);
+    band = 'VHF';
+    bandDetail = 'VHF-Low';
+  } else if (fMhz >= 174 && fMhz < 216) {
+    rf = 7 + Math.round((fMhz - 177) / 6);
+    band = 'VHF';
+    bandDetail = 'VHF-High';
+  } else if (fMhz >= 470 && fMhz <= 806) {
+    rf = 14 + Math.round((fMhz - 473) / 6);
+    band = 'UHF';
+    bandDetail = 'UHF';
+  } else if (fMhz < 300) {
+    band = 'VHF';
+    bandDetail = 'VHF';
+  } else {
+    band = 'UHF';
+    bandDetail = 'UHF';
+  }
+
+  return {
+    band,
+    bandDetail,
+    rf,
+    freqMhz: fMhz.toFixed(1),
+  };
+}
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -48,7 +91,12 @@ const state = {
   pollInterval: 2500,
   pollTimer: null,
   filterText: '',
-  filterType: 'allowed', // 'allowed', 'all', 'favorites', 'hd', 'hidden'
+  filters: {
+    status: 'allowed', // 'allowed', 'all', 'favorites', 'hidden'
+    band: 'all',       // 'all', 'vhf', 'vhf-low', 'vhf-high', 'uhf'
+    format: 'all',     // 'all', 'atsc3', 'atsc1', 'hd', 'sd'
+    drm: 'all',        // 'all', 'drm', 'nodrm'
+  },
   selectedTuner: null, // e.g. 'tuner0'
   tunerHistory: {},    // { tuner0: [ { timestamp, strength, quality, symbol, rate, isActive }, ... ] }
   tunerSampleInterval: 1000, // 1000, 5000, 10000, 60000
@@ -93,6 +141,7 @@ const detailChannelLogo = document.getElementById('detail-channel-logo');
 const detailChannelName = document.getElementById('detail-channel-name');
 const detailChannelLocality = document.getElementById('detail-channel-locality');
 const detailChannelNumber = document.getElementById('detail-channel-number');
+const detailChannelBand = document.getElementById('detail-channel-band');
 const detailClientsList = document.getElementById('detail-clients-list');
 const detailNetworkRate = document.getElementById('detail-network-rate');
 const sampleRatePills = document.querySelectorAll('#sample-rate-pills .pill');
@@ -128,14 +177,18 @@ const chartTimeNow = document.getElementById('chart-time-now');
 
 // Lineup Elements
 const lineupSearch = document.getElementById('lineup-search');
-const lineupFilterPills = document.querySelectorAll('#lineup-filter-pills .pill');
-const lineupAllowedPill = document.getElementById('lineup-allowed-pill');
-const lineupAllPill = document.getElementById('lineup-all-pill');
-const lineupFavPill = document.getElementById('lineup-fav-pill');
-const lineupAtsc3Pill = document.getElementById('lineup-atsc3-pill');
-const lineupDrmPill = document.getElementById('lineup-drm-pill');
-const lineupHdPill = document.getElementById('lineup-hd-pill');
-const lineupHiddenPill = document.getElementById('lineup-hidden-pill');
+const btnLineupFilters = document.getElementById('btn-lineup-filters');
+const lineupFilterMenu = document.getElementById('lineup-filter-menu');
+const lineupFilterActiveCount = document.getElementById('lineup-filter-active-count');
+const filterStatusSelect = document.getElementById('filter-status-select');
+const filterBandSelect = document.getElementById('filter-band-select');
+const filterFormatSelect = document.getElementById('filter-format-select');
+const filterDrmSelect = document.getElementById('filter-drm-select');
+const btnResetFilters = document.getElementById('btn-reset-filters');
+const btnClearFilters = document.getElementById('btn-clear-filters');
+const btnApplyFilters = document.getElementById('btn-apply-filters');
+const btnQuickClearFilters = document.getElementById('btn-quick-clear-filters');
+const lineupActiveChips = document.getElementById('lineup-active-chips');
 const lineupTbody = document.getElementById('lineup-tbody');
 const lineupCountBadge = document.getElementById('lineup-count-badge');
 const btnRefreshLineup = document.getElementById('btn-refresh-lineup');
@@ -1413,17 +1466,25 @@ function renderTuners(statusItems) {
         `;
       }
 
-      // Network bitrate
+      // Network bitrate / Frequency
+      const rfInfo = getRfChannelInfo(tuner.Frequency || (state.lineup?.find(c => c.GuideNumber === tuner.VctNumber)?.Frequency));
       let rateDisplay = '';
       if (tuner.NetworkRate) {
         rateDisplay = `<span>Rate: <strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong></span>`;
       } else if (tuner.Frequency) {
         rateDisplay = `<span>Freq: ${(tuner.Frequency / 1000000).toFixed(3)} MHz</span>`;
       }
+      if (rfInfo && tuner.NetworkRate) {
+        rateDisplay += `<span> • <strong>${rfInfo.freqMhz} MHz</strong> (RF ${rfInfo.rf || '—'})</span>`;
+      }
 
       if (clientSessions.length > 1) {
         sharedBadge = `<span class="badge badge-hd" title="Tuner Sharing active: ${clientSessions.length} clients sharing this tuner">Shared (${clientSessions.length})</span>`;
       }
+
+      const bandBadge = rfInfo
+        ? `<span class="badge ${rfInfo.band === 'UHF' ? 'badge-uhf' : 'badge-vhf'}" title="${rfInfo.bandDetail} (Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz)">${rfInfo.band}</span>`
+        : '';
 
       const stationInfo = getStationInfo(tuner.VctName);
       let logoHtml = '';
@@ -1452,6 +1513,7 @@ function renderTuners(statusItems) {
               ${localityHtml}
             </div>
             <span class="tuner-channel-number">${tuner.VctNumber ? `Ch ${tuner.VctNumber}` : ''}</span>
+            ${bandBadge}
           </div>
           <div class="tuner-meta-row">
             ${clientsDisplay}
@@ -1786,6 +1848,7 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
   // Channel Info & Logo
   if (isActive && (tuner.VctName || tuner.VctNumber)) {
     const stationInfo = getStationInfo(tuner.VctName);
+    const rfInfo = getRfChannelInfo(tuner.Frequency || (state.lineup?.find(c => c.GuideNumber === tuner.VctNumber)?.Frequency));
     let logoHtml = '';
     let localityText = '';
 
@@ -1805,11 +1868,17 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
     detailChannelName.textContent = tuner.VctName || 'Channel In Use';
     if (detailChannelLocality) detailChannelLocality.textContent = localityText;
     detailChannelNumber.textContent = tuner.VctNumber ? `Ch ${tuner.VctNumber}` : '';
+    if (detailChannelBand) {
+      detailChannelBand.innerHTML = rfInfo
+        ? `<span class="badge ${rfInfo.band === 'UHF' ? 'badge-uhf' : 'badge-vhf'}" title="${rfInfo.bandDetail} (Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz)">${rfInfo.band}</span>`
+        : '';
+    }
   } else {
     if (detailChannelLogo) detailChannelLogo.innerHTML = '';
     detailChannelName.textContent = '—';
     if (detailChannelLocality) detailChannelLocality.textContent = '';
     detailChannelNumber.textContent = '';
+    if (detailChannelBand) detailChannelBand.innerHTML = '';
   }
 
   // Client(s)
@@ -1822,10 +1891,15 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
   }
 
   // Network Bitrate / Frequency
+  const detailRfInfo = getRfChannelInfo(tuner.Frequency || (state.lineup?.find(c => c.GuideNumber === tuner.VctNumber)?.Frequency));
   if (tuner.NetworkRate) {
-    detailNetworkRate.innerHTML = `<strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong>`;
+    let text = `<strong>${(tuner.NetworkRate / 1000000).toFixed(2)} Mbps</strong>`;
+    if (detailRfInfo) {
+      text += ` <span class="text-muted text-xs">(${detailRfInfo.freqMhz} MHz • RF ${detailRfInfo.rf || '—'})</span>`;
+    }
+    detailNetworkRate.innerHTML = text;
   } else if (tuner.Frequency) {
-    detailNetworkRate.textContent = `${(tuner.Frequency / 1000000).toFixed(3)} MHz`;
+    detailNetworkRate.textContent = `${(tuner.Frequency / 1000000).toFixed(3)} MHz${detailRfInfo && detailRfInfo.rf ? ` (RF ${detailRfInfo.rf})` : ''}`;
   } else {
     detailNetworkRate.innerHTML = '<span class="text-muted">—</span>';
   }
@@ -2159,6 +2233,9 @@ async function updateLineupLiveStatus() {
 }
 
 function getLineupSignalHtml(ch, activeTuner) {
+  const rfInfo = getRfChannelInfo((activeTuner && activeTuner.Frequency) || (ch && ch.Frequency));
+  const rfText = rfInfo ? ` • ${rfInfo.bandDetail}${rfInfo.rf ? ` (RF ${rfInfo.rf})` : ''} • ${rfInfo.freqMhz} MHz` : '';
+
   if (activeTuner && (activeTuner.SignalQualityPercent != null || activeTuner.SignalStrengthPercent != null)) {
     const sq = activeTuner.SignalQualityPercent ?? activeTuner.SignalStrengthPercent;
     const ss = activeTuner.SignalStrengthPercent;
@@ -2167,7 +2244,7 @@ function getLineupSignalHtml(ch, activeTuner) {
     else if (sq >= 60) gradeClass = 'fair';
 
     const tunerLabel = formatTunerName(activeTuner.Resource);
-    const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}`;
+    const tooltip = `Live on ${tunerLabel}: ${sq}% SNR Quality${ss != null ? ` (${ss}% Strength)` : ''}${rfText}`;
     return `
       <div class="signal-meter-wrapper" title="${tooltip}">
         <span class="live-dot-mini" title="Active live stream/recording"></span>
@@ -2186,7 +2263,7 @@ function getLineupSignalHtml(ch, activeTuner) {
     if (sq >= 80) gradeClass = 'good';
     else if (sq >= 60) gradeClass = 'fair';
 
-    const tooltip = `Last Scan: ${sq}% Signal Quality${ss != null ? ` (${ss}% Strength)` : ''} • Static value from last channel scan`;
+    const tooltip = `Last Scan: ${sq}% Signal Quality${ss != null ? ` (${ss}% Strength)` : ''}${rfText} • Static value from last channel scan`;
     return `
       <div class="signal-meter-wrapper" title="${tooltip}">
         <div class="signal-mini-bar">
@@ -2197,7 +2274,7 @@ function getLineupSignalHtml(ch, activeTuner) {
     `;
   }
 
-  return '<span class="text-muted" title="No scan data. Signal is captured during channel scans or measured in real-time when actively tuned.">—</span>';
+  return `<span class="text-muted" title="No scan data.${rfText ? rfText.replace(/^ • /, ' ') : ''} Signal is captured during channel scans or measured in real-time when actively tuned.">—</span>`;
 }
 
 function updateLineupSignalMeters() {
@@ -2303,20 +2380,50 @@ function updateLineupStats() {
   const hiddenChannels = state.lineup.filter((ch) => ch.Enabled === 0);
   const favChannels = state.lineup.filter((ch) => ch.Favorite === 1);
   const atsc3Channels = state.lineup.filter((ch) => isAtsc3Channel(ch));
+  const atsc1Channels = state.lineup.filter((ch) => !isAtsc3Channel(ch));
   const drmChannels = state.lineup.filter((ch) => ch.DRM === 1);
+  const nodrmChannels = state.lineup.filter((ch) => ch.DRM !== 1);
   const hdChannels = state.lineup.filter((ch) => ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')));
+  const sdChannels = state.lineup.filter((ch) => !(ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD'))));
 
-  if (lineupAllowedPill) lineupAllowedPill.textContent = allowedChannels.length;
-  if (lineupAllPill) lineupAllPill.textContent = state.lineup.length;
-  if (lineupFavPill) lineupFavPill.textContent = favChannels.length;
-  if (lineupAtsc3Pill) lineupAtsc3Pill.textContent = atsc3Channels.length;
-  if (lineupDrmPill) lineupDrmPill.textContent = drmChannels.length;
-  if (lineupHdPill) lineupHdPill.textContent = hdChannels.length;
-  if (lineupHiddenPill) lineupHiddenPill.textContent = hiddenChannels.length;
+  const vhfChannels = state.lineup.filter((ch) => getRfChannelInfo(ch.Frequency)?.band === 'VHF');
+  const vhfLowChannels = state.lineup.filter((ch) => getRfChannelInfo(ch.Frequency)?.bandDetail === 'VHF-Low');
+  const vhfHighChannels = state.lineup.filter((ch) => getRfChannelInfo(ch.Frequency)?.bandDetail === 'VHF-High');
+  const uhfChannels = state.lineup.filter((ch) => getRfChannelInfo(ch.Frequency)?.band === 'UHF');
 
   if (lineupCountBadge) {
     lineupCountBadge.textContent = allowedChannels.length;
     lineupCountBadge.classList.remove('hidden');
+  }
+
+  // Update option counts in filter selects
+  if (filterStatusSelect && filterStatusSelect.options.length >= 4) {
+    filterStatusSelect.options[0].textContent = `Allowed Only (${allowedChannels.length})`;
+    filterStatusSelect.options[1].textContent = `All Channels (${state.lineup.length})`;
+    filterStatusSelect.options[2].textContent = `Favorites ⭐ (${favChannels.length})`;
+    filterStatusSelect.options[3].textContent = `Hidden ❌ (${hiddenChannels.length})`;
+  }
+
+  if (filterBandSelect && filterBandSelect.options.length >= 5) {
+    filterBandSelect.options[0].textContent = `All Bands (${state.lineup.length})`;
+    filterBandSelect.options[1].textContent = `VHF Only (${vhfChannels.length})`;
+    filterBandSelect.options[2].textContent = `VHF-Low (${vhfLowChannels.length})`;
+    filterBandSelect.options[3].textContent = `VHF-High (${vhfHighChannels.length})`;
+    filterBandSelect.options[4].textContent = `UHF Only (${uhfChannels.length})`;
+  }
+
+  if (filterFormatSelect && filterFormatSelect.options.length >= 5) {
+    filterFormatSelect.options[0].textContent = `All Formats (${state.lineup.length})`;
+    filterFormatSelect.options[1].textContent = `ATSC 3.0 (${atsc3Channels.length})`;
+    filterFormatSelect.options[2].textContent = `ATSC 1.0 (${atsc1Channels.length})`;
+    filterFormatSelect.options[3].textContent = `HD Only (${hdChannels.length})`;
+    filterFormatSelect.options[4].textContent = `SD Only (${sdChannels.length})`;
+  }
+
+  if (filterDrmSelect && filterDrmSelect.options.length >= 3) {
+    filterDrmSelect.options[0].textContent = `All Channels (${state.lineup.length})`;
+    filterDrmSelect.options[1].textContent = `DRM Protected 🔒 (${drmChannels.length})`;
+    filterDrmSelect.options[2].textContent = `Clear / No DRM (${nodrmChannels.length})`;
   }
 
   renderChannelsCount(allowedChannels.length, state.lineup.length);
@@ -2331,11 +2438,13 @@ async function fetchLineup() {
   lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
 
   try {
-    // Concurrently fetch lineup and status so active tuner signal meters are available
-    const [lineupRes, statusRes] = await Promise.all([
-      fetch(`http://${ip}/lineup.json?show=found`),
-      fetch(`http://${ip}/status.json`).catch(() => null)
-    ]);
+    // Concurrently fetch lineup with tuning info (for frequencies) and status
+    let lineupRes = await fetch(`http://${ip}/lineup.json?show=found&tuning`).catch(() => null);
+    if (!lineupRes || !lineupRes.ok) {
+      lineupRes = await fetch(`http://${ip}/lineup.json?show=found`);
+    }
+
+    const statusRes = await fetch(`http://${ip}/status.json`).catch(() => null);
 
     if (!lineupRes.ok) throw new Error(`HTTP ${lineupRes.status}`);
     const lineup = await lineupRes.json();
@@ -2357,22 +2466,158 @@ async function fetchLineup() {
 }
 
 function setupLineupFilters() {
-  lineupSearch.addEventListener('input', (e) => {
-    state.filterText = e.target.value.toLowerCase().trim();
-    renderLineup();
-  });
+  if (lineupSearch) {
+    lineupSearch.addEventListener('input', (e) => {
+      state.filterText = e.target.value.toLowerCase().trim();
+      renderLineup();
+    });
+  }
 
-  lineupFilterPills.forEach((pill) => {
-    pill.addEventListener('click', () => {
-      lineupFilterPills.forEach((p) => p.classList.remove('active'));
-      pill.classList.add('active');
-      state.filterType = pill.getAttribute('data-filter');
+  if (btnLineupFilters && lineupFilterMenu) {
+    btnLineupFilters.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isHidden = lineupFilterMenu.classList.contains('hidden');
+      lineupFilterMenu.classList.toggle('hidden', !isHidden);
+      btnLineupFilters.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!lineupFilterMenu.classList.contains('hidden') &&
+          !lineupFilterMenu.contains(e.target) &&
+          !btnLineupFilters.contains(e.target)) {
+        lineupFilterMenu.classList.add('hidden');
+        btnLineupFilters.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
+
+  const handleFilterChange = () => {
+    state.filters.status = filterStatusSelect?.value || 'allowed';
+    state.filters.band = filterBandSelect?.value || 'all';
+    state.filters.format = filterFormatSelect?.value || 'all';
+    state.filters.drm = filterDrmSelect?.value || 'all';
+    renderLineup();
+  };
+
+  if (filterStatusSelect) filterStatusSelect.addEventListener('change', handleFilterChange);
+  if (filterBandSelect) filterBandSelect.addEventListener('change', handleFilterChange);
+  if (filterFormatSelect) filterFormatSelect.addEventListener('change', handleFilterChange);
+  if (filterDrmSelect) filterDrmSelect.addEventListener('change', handleFilterChange);
+
+  const resetFilters = () => {
+    state.filters = {
+      status: 'allowed',
+      band: 'all',
+      format: 'all',
+      drm: 'all',
+    };
+    if (filterStatusSelect) filterStatusSelect.value = 'allowed';
+    if (filterBandSelect) filterBandSelect.value = 'all';
+    if (filterFormatSelect) filterFormatSelect.value = 'all';
+    if (filterDrmSelect) filterDrmSelect.value = 'all';
+    renderLineup();
+  };
+
+  if (btnResetFilters) btnResetFilters.addEventListener('click', resetFilters);
+  if (btnClearFilters) btnClearFilters.addEventListener('click', resetFilters);
+  if (btnQuickClearFilters) btnQuickClearFilters.addEventListener('click', resetFilters);
+
+  if (btnApplyFilters) {
+    btnApplyFilters.addEventListener('click', () => {
+      if (lineupFilterMenu) lineupFilterMenu.classList.add('hidden');
+      if (btnLineupFilters) btnLineupFilters.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  if (btnRefreshLineup) btnRefreshLineup.addEventListener('click', fetchLineup);
+  if (btnExportM3u) btnExportM3u.addEventListener('click', exportM3u);
+}
+
+function renderActiveFilterChips() {
+  if (!lineupActiveChips) return;
+
+  const chips = [];
+
+  if (state.filters.status !== 'allowed') {
+    const labels = { all: 'All Channels', favorites: 'Favorites ⭐', hidden: 'Hidden ❌' };
+    chips.push({ key: 'status', label: `Status: ${labels[state.filters.status] || state.filters.status}` });
+  }
+
+  if (state.filters.band !== 'all') {
+    const labels = { vhf: 'Band: VHF', 'vhf-low': 'Band: VHF-Low', 'vhf-high': 'Band: VHF-High', uhf: 'Band: UHF' };
+    chips.push({ key: 'band', label: labels[state.filters.band] || state.filters.band });
+  }
+
+  if (state.filters.format !== 'all') {
+    const labels = { atsc3: 'Format: ATSC 3.0', atsc1: 'Format: ATSC 1.0', hd: 'Format: HD', sd: 'Format: SD' };
+    chips.push({ key: 'format', label: labels[state.filters.format] || state.filters.format });
+  }
+
+  if (state.filters.drm !== 'all') {
+    const labels = { drm: 'DRM: Protected 🔒', nodrm: 'DRM: Clear' };
+    chips.push({ key: 'drm', label: labels[state.filters.drm] || state.filters.drm });
+  }
+
+  const count = chips.length;
+
+  // Update button badge and styling
+  if (lineupFilterActiveCount) {
+    lineupFilterActiveCount.textContent = count;
+    lineupFilterActiveCount.classList.toggle('hidden', count === 0);
+  }
+  if (btnLineupFilters) {
+    btnLineupFilters.classList.toggle('has-filters', count > 0);
+  }
+  if (btnQuickClearFilters) {
+    btnQuickClearFilters.classList.toggle('hidden', count === 0);
+  }
+
+  if (count === 0) {
+    lineupActiveChips.classList.add('hidden');
+    lineupActiveChips.innerHTML = '';
+    return;
+  }
+
+  lineupActiveChips.classList.remove('hidden');
+  lineupActiveChips.innerHTML = chips
+    .map(
+      (c) =>
+        `<span class="filter-chip"><span>${c.label}</span><button type="button" class="filter-chip-remove" data-filter-key="${c.key}" title="Remove filter">&times;</button></span>`
+    )
+    .join('') +
+    `<button type="button" class="filter-chip-clear-all" id="btn-chips-clear-all">Clear All</button>`;
+
+  lineupActiveChips.querySelectorAll('.filter-chip-remove').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-filter-key');
+      if (key === 'status') {
+        state.filters.status = 'allowed';
+        if (filterStatusSelect) filterStatusSelect.value = 'allowed';
+      } else if (key === 'band') {
+        state.filters.band = 'all';
+        if (filterBandSelect) filterBandSelect.value = 'all';
+      } else if (key === 'format') {
+        state.filters.format = 'all';
+        if (filterFormatSelect) filterFormatSelect.value = 'all';
+      } else if (key === 'drm') {
+        state.filters.drm = 'all';
+        if (filterDrmSelect) filterDrmSelect.value = 'all';
+      }
       renderLineup();
     });
   });
 
-  btnRefreshLineup.addEventListener('click', fetchLineup);
-  btnExportM3u.addEventListener('click', exportM3u);
+  const clearAllBtn = document.getElementById('btn-chips-clear-all');
+  if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', () => {
+      state.filters = { status: 'allowed', band: 'all', format: 'all', drm: 'all' };
+      if (filterStatusSelect) filterStatusSelect.value = 'allowed';
+      if (filterBandSelect) filterBandSelect.value = 'all';
+      if (filterFormatSelect) filterFormatSelect.value = 'all';
+      if (filterDrmSelect) filterDrmSelect.value = 'all';
+      renderLineup();
+    });
+  }
 }
 
 function renderLineup() {
@@ -2394,11 +2639,22 @@ function renderLineup() {
 
   const filtered = state.lineup.filter((ch) => {
     const station = getStationInfo(ch.GuideName);
-    // Text search (matches GuideName, GuideNumber, Network, or City/State)
+    const activeTuner = (state.tuners || []).find(
+      (t) => t.VctNumber && (t.VctNumber === ch.GuideNumber || String(t.VctNumber) === String(ch.GuideNumber))
+    );
+    const rfInfo = getRfChannelInfo(ch.Frequency || (activeTuner && activeTuner.Frequency));
+
+    // Text search (matches GuideName, GuideNumber, Network, City/State, Band, or RF channel)
     const matchesText =
       !state.filterText ||
       (ch.GuideName && ch.GuideName.toLowerCase().includes(state.filterText)) ||
       (ch.GuideNumber && ch.GuideNumber.toLowerCase().includes(state.filterText)) ||
+      (rfInfo && (
+        rfInfo.band.toLowerCase().includes(state.filterText) ||
+        rfInfo.bandDetail.toLowerCase().includes(state.filterText) ||
+        `rf ${rfInfo.rf}`.includes(state.filterText) ||
+        `rf${rfInfo.rf}`.includes(state.filterText)
+      )) ||
       (station && (
         station.network.toLowerCase().includes(state.filterText) ||
         station.locality.toLowerCase().includes(state.filterText)
@@ -2406,27 +2662,35 @@ function renderLineup() {
 
     if (!matchesText) return false;
 
-    // Pill filters
-    if (state.filterType === 'allowed') {
-      return ch.Enabled !== 0;
+    // Status filter
+    if (state.filters.status === 'allowed' && ch.Enabled === 0) return false;
+    if (state.filters.status === 'hidden' && ch.Enabled !== 0) return false;
+    if (state.filters.status === 'favorites' && ch.Favorite !== 1) return false;
+
+    // Band filter
+    if (state.filters.band !== 'all') {
+      if (!rfInfo) return false;
+      if (state.filters.band === 'vhf' && rfInfo.band !== 'VHF') return false;
+      if (state.filters.band === 'vhf-low' && rfInfo.bandDetail !== 'VHF-Low') return false;
+      if (state.filters.band === 'vhf-high' && rfInfo.bandDetail !== 'VHF-High') return false;
+      if (state.filters.band === 'uhf' && rfInfo.band !== 'UHF') return false;
     }
-    if (state.filterType === 'favorites') {
-      return ch.Favorite === 1;
-    }
-    if (state.filterType === 'atsc3') {
-      return isAtsc3Channel(ch);
-    }
-    if (state.filterType === 'drm') {
-      return ch.DRM === 1;
-    }
-    if (state.filterType === 'hd') {
-      return ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD'));
-    }
-    if (state.filterType === 'hidden') {
-      return ch.Enabled === 0;
-    }
-    return true; // 'all'
+
+    // Format filter
+    if (state.filters.format === 'atsc3' && !isAtsc3Channel(ch)) return false;
+    if (state.filters.format === 'atsc1' && isAtsc3Channel(ch)) return false;
+    if (state.filters.format === 'hd' && ch.HD !== 1 && !(ch.VideoCodec && ch.VideoCodec.includes('HD'))) return false;
+    if (state.filters.format === 'sd' && (ch.HD === 1 || (ch.VideoCodec && ch.VideoCodec.includes('HD')))) return false;
+
+    // DRM filter
+    if (state.filters.drm === 'drm' && ch.DRM !== 1) return false;
+    if (state.filters.drm === 'nodrm' && ch.DRM === 1) return false;
+
+    return true;
   });
+
+  // Render Active Filter Chips & Badges
+  renderActiveFilterChips();
 
   if (filtered.length === 0) {
     lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No matching channels found.</td></tr>';
@@ -2469,6 +2733,13 @@ function renderLineup() {
     const activeTuner = (state.tuners || []).find(
       (t) => t.VctNumber && (t.VctNumber === ch.GuideNumber || String(t.VctNumber) === String(ch.GuideNumber))
     );
+
+    const rfInfo = getRfChannelInfo(ch.Frequency || (activeTuner && activeTuner.Frequency));
+    let bandBadge = '';
+    if (rfInfo) {
+      const title = `${rfInfo.bandDetail} (Physical RF ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz)`;
+      bandBadge = `<span class="badge ${rfInfo.band === 'UHF' ? 'badge-uhf' : 'badge-vhf'}" title="${title}">${rfInfo.band}</span>`;
+    }
 
     // Signal Quality meter (live tuner signal takes precedence over static scan signal)
     const signalHtml = getLineupSignalHtml(ch, activeTuner);
@@ -2521,8 +2792,13 @@ function renderLineup() {
       </div>
     `;
 
+    const rfSubHtml = rfInfo ? `<div class="channel-rf-sub" title="Physical RF Channel ${rfInfo.rf || '—'} • ${rfInfo.freqMhz} MHz">RF ${rfInfo.rf || '—'}</div>` : '';
+
     tr.innerHTML = `
-      <td class="channel-num-cell">${ch.GuideNumber}</td>
+      <td class="channel-num-cell">
+        <div>${ch.GuideNumber}</div>
+        ${rfSubHtml}
+      </td>
       <td class="channel-name-cell">
         ${channelNameHtml}
       </td>
@@ -2530,6 +2806,7 @@ function renderLineup() {
         <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
           ${statusBadge}
           ${atscBadge}
+          ${bandBadge}
           ${isHd ? '<span class="badge badge-hd">HD</span>' : '<span class="badge">SD</span>'}
           ${drmBadge}
         </div>
@@ -3503,7 +3780,7 @@ async function gatherDiagnostics() {
     const endpointPromises = [
       fetchDiagnosticEndpoint(`http://${ip}/discover.json`),
       fetchDiagnosticEndpoint(`http://${ip}/status.json`),
-      fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found`),
+      fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found&tuning`),
       fetchDiagnosticEndpoint(`http://${ip}/lineup_status.json`),
     ];
 

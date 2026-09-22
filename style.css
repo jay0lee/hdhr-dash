@@ -765,6 +765,188 @@ body {
   font-weight: 600;
 }
 
+/* Filter Dropdown & Active Chips */
+.filter-dropdown-container {
+  position: relative;
+}
+
+.filter-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.filter-toggle-btn.has-filters {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.filter-count-badge {
+  background-color: var(--accent-cyan);
+  color: var(--text-inverse);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 9999px;
+}
+
+.dropdown-caret {
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.filter-toggle-btn[aria-expanded="true"] .dropdown-caret {
+  transform: rotate(180deg);
+}
+
+.filter-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 290px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xl);
+  padding: 14px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.filter-dropdown-menu.hidden {
+  display: none !important;
+}
+
+.filter-menu-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-main);
+}
+
+.filter-menu-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.btn-text-action {
+  background: none;
+  border: none;
+  color: var(--accent-cyan);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+  font-weight: 500;
+}
+
+.btn-text-action:hover {
+  text-decoration: underline;
+}
+
+.filter-menu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.filter-menu-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.filter-menu-label {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.filter-menu-select {
+  width: 100%;
+  padding: 7px 10px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.filter-menu-select:focus {
+  outline: 2px solid var(--accent-cyan);
+  border-color: transparent;
+}
+
+.filter-menu-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-main);
+}
+
+.active-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: -6px;
+  margin-bottom: 14px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 10px;
+  border-radius: 9999px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.filter-chip-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.filter-chip-remove:hover {
+  opacity: 1;
+}
+
+.filter-chip-clear-all {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: 4px;
+}
+
+.filter-chip-clear-all:hover {
+  color: var(--accent-cyan);
+}
+
 .lineup-table-wrapper {
   background-color: var(--bg-card);
   border: 1px solid var(--border-main);
@@ -845,6 +1027,44 @@ body {
   color: #fca5a5;
   border: 1px solid rgba(239, 68, 68, 0.4);
   font-weight: 600;
+}
+
+.badge-uhf {
+  background-color: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+  font-weight: 600;
+}
+
+.badge-vhf {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  font-weight: 600;
+}
+
+[data-theme="light"] .badge-uhf {
+  background-color: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.3);
+}
+
+[data-theme="light"] .badge-vhf {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.channel-rf-sub {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.detail-channel-band {
+  display: inline-flex;
+  align-items: center;
 }
 
 .signal-meter-wrapper {
