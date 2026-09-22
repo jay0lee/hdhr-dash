@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.44';
+const APP_VERSION = '2.0.45';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -87,7 +87,9 @@ const detailStatusDot = document.getElementById('detail-status-dot');
 const detailStatusText = document.getElementById('detail-status-text');
 const detailTunerName = document.getElementById('detail-tuner-name');
 const detailSharedBadge = document.getElementById('detail-shared-badge');
+const detailChannelLogo = document.getElementById('detail-channel-logo');
 const detailChannelName = document.getElementById('detail-channel-name');
+const detailChannelLocality = document.getElementById('detail-channel-locality');
 const detailChannelNumber = document.getElementById('detail-channel-number');
 const detailClientsList = document.getElementById('detail-clients-list');
 const detailNetworkRate = document.getElementById('detail-network-rate');
@@ -1024,13 +1026,15 @@ function renderTuners(statusItems) {
       let localityHtml = '';
       if (stationInfo) {
         if (stationInfo.logo) {
-          logoHtml = `<img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" />`;
+          logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
         } else {
-          logoHtml = `<span class="badge badge-affiliate">${stationInfo.network}</span>`;
+          logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
         }
         if (stationInfo.locality) {
           localityHtml = `<span class="tuner-locality text-xs text-muted">(${stationInfo.locality})</span>`;
         }
+      } else if (tuner.VctName) {
+        logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
       }
 
       detailsHtml = `
@@ -1373,9 +1377,36 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
     detailSharedBadge.innerHTML = '';
   }
 
-  // Channel Info
-  detailChannelName.textContent = tuner.VctName || (isActive ? 'Channel In Use' : '—');
-  detailChannelNumber.textContent = tuner.VctNumber ? `Ch ${tuner.VctNumber}` : '';
+  // Channel Info & Logo
+  if (isActive && (tuner.VctName || tuner.VctNumber)) {
+    const stationInfo = getStationInfo(tuner.VctName);
+    let logoHtml = '';
+    let localityText = '';
+
+    if (stationInfo && stationInfo.logo) {
+      logoHtml = `<div class="channel-logo-wrap"><img src="${stationInfo.logo}" alt="${stationInfo.network}" class="affiliate-logo tuner-affiliate-logo" title="${stationInfo.network} • ${stationInfo.locality}" /></div>`;
+      if (stationInfo.locality) {
+        localityText = `(${stationInfo.locality})`;
+      }
+    } else if (stationInfo && stationInfo.network) {
+      logoHtml = `<div class="channel-logo-wrap"><span class="badge badge-affiliate">${stationInfo.network}</span></div>`;
+      if (stationInfo.locality) {
+        localityText = `(${stationInfo.locality})`;
+      }
+    } else {
+      logoHtml = `<div class="channel-logo-wrap"><img src="assets/logos/generic-tv.svg" alt="TV" class="affiliate-logo generic-tv-logo" title="Local Broadcast Channel" /></div>`;
+    }
+
+    if (detailChannelLogo) detailChannelLogo.innerHTML = logoHtml;
+    detailChannelName.textContent = tuner.VctName || 'Channel In Use';
+    if (detailChannelLocality) detailChannelLocality.textContent = localityText;
+    detailChannelNumber.textContent = tuner.VctNumber ? `Ch ${tuner.VctNumber}` : '';
+  } else {
+    if (detailChannelLogo) detailChannelLogo.innerHTML = '';
+    detailChannelName.textContent = '—';
+    if (detailChannelLocality) detailChannelLocality.textContent = '';
+    detailChannelNumber.textContent = '';
+  }
 
   // Client(s)
   if (clientSessions.length === 0) {
