@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.45';
+const APP_VERSION = '2.0.46';
 
 // Affiliate Network Logos
 const NETWORK_LOGOS = {
@@ -39,6 +39,7 @@ const state = {
   series: [],
   episodes: [],
   rules: [],
+  activePlaybacks: [],
   dvrSubView: 'series', // 'series', 'episodes', 'rules'
   selectedSeriesId: null,
   hasDvr: false,
@@ -332,6 +333,14 @@ function setupNavigation() {
       if (state.activeTab !== targetTab) {
         switchTab(targetTab, false);
       }
+      if (targetTab === 'recordings') {
+        if (state.activePlaybacks && state.activePlaybacks.length > 0 && state.dvrSubView !== 'episodes') {
+          state.selectedSeriesId = null;
+          state.dvrSubView = 'episodes';
+          dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'episodes'));
+          renderCurrentDvrSubView();
+        }
+      }
       if (targetTab === 'tuners') {
         const params = new URLSearchParams(queryPart || '');
         const tunerId = params.get('tuner');
@@ -345,6 +354,20 @@ function setupNavigation() {
   }
 
   window.addEventListener('hashchange', handleHashNavigation);
+
+  if (infoActiveClients) {
+    infoActiveClients.addEventListener('click', (e) => {
+      const pbLink = e.target.closest('a[href="#recordings"]');
+      if (pbLink) {
+        if (state.dvrSubView !== 'episodes') {
+          state.selectedSeriesId = null;
+          state.dvrSubView = 'episodes';
+          dvrViewPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-dvr-view') === 'episodes'));
+          renderCurrentDvrSubView();
+        }
+      }
+    });
+  }
 
   // Read initial active tab from URL hash or localStorage
   const rawInitialHash = window.location.hash.replace('#', '');
@@ -538,6 +561,156 @@ async function checkFirmwareUpdate(deviceData) {
   }
 }
 
+function isEpisodeMatchingPlayback(ep, playbackSession) {
+  if (!playbackSession || !playbackSession.name || !ep) return false;
+  const pbName = playbackSession.name.trim().toLowerCase();
+
+  // 1. Check title match
+  if (!ep.Title) return false;
+  const epTitle = ep.Title.trim().toLowerCase();
+  if (!pbName.includes(epTitle)) {
+    return false;
+  }
+
+  // 2. If episode has EpisodeNumber (e.g. S02E01), check if it matches
+  if (ep.EpisodeNumber) {
+    const epNum = ep.EpisodeNumber.trim().toLowerCase();
+    if (pbName.includes(epNum)) {
+      return true;
+    }
+  }
+
+  // 3. If episode has EpisodeTitle, check if it matches
+  if (ep.EpisodeTitle) {
+    const epEpTitle = ep.EpisodeTitle.trim().toLowerCase();
+    if (pbName.includes(epEpTitle)) {
+      return true;
+    }
+  }
+
+  // 4. Check if date string matches (e.g. 20260920)
+  if (ep.StartTime) {
+    const d = new Date(ep.StartTime * 1000);
+    const yyyymmdd = d.getUTCFullYear().toString() +
+      String(d.getUTCMonth() + 1).padStart(2, '0') +
+      String(d.getUTCDate()).padStart(2, '0');
+    if (pbName.includes(yyyymmdd)) {
+      return true;
+    }
+  }
+
+  // 5. If ep.Title matched and there's no EpisodeNumber or EpisodeTitle on the episode
+  if (!ep.EpisodeNumber && !ep.EpisodeTitle) {
+    return true;
+  }
+
+  // Fallback: if pbName starts with epTitle
+  return pbName.startsWith(epTitle);
+}
+
+function parseDeviceStatus(statusItems, ip) {
+  if (!Array.isArray(statusItems)) {
+    return { activeClients: [], activeRecordings: [], activePlaybacks: [] };
+  }
+
+  const physicalTuners = statusItems.filter((item) =>
+    item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+  );
+  const liveSessions = statusItems.filter((item) =>
+    !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
+  );
+
+  const activeClients = [];
+  const activeRecordings = [];
+  const activePlaybacks = [];
+
+  // Check physical tuners for direct external clients
+  physicalTuners.forEach((tuner) => {
+    const targetIp = tuner.TargetIP;
+    const isExternalIp =
+      targetIp &&
+      targetIp !== 'none' &&
+      targetIp !== '127.0.0.1' &&
+      targetIp !== '::1' &&
+      targetIp !== '[::1]' &&
+      targetIp !== ip;
+
+    const hasChannel = Boolean(tuner.VctNumber || tuner.VctName);
+
+    if (hasChannel && isExternalIp) {
+      const chLabel = tuner.VctNumber
+        ? `Ch ${tuner.VctNumber}${tuner.VctName ? ' ' + tuner.VctName : ''}`
+        : (tuner.VctName || tuner.Resource);
+
+      if (!activeClients.some((c) => c.ip === targetIp)) {
+        activeClients.push({
+          ip: targetIp,
+          channel: chLabel,
+        });
+      }
+    }
+  });
+
+  // Check liveSessions (sessions from HTTP streaming, DVR record engines, or DVR playback)
+  liveSessions.forEach((s) => {
+    const isRecord =
+      (s.Resource && s.Resource.toLowerCase().includes('record')) ||
+      (s.Name && s.Name.toLowerCase().includes('record'));
+    const isPlayback =
+      (s.Resource && s.Resource.toLowerCase().includes('playback')) ||
+      (s.Name && s.Name.toLowerCase().includes('playback'));
+
+    if (isRecord) {
+      const name = s.Name ? `Ch ${s.Name}` : 'DVR Recording';
+      if (!activeRecordings.some((r) => r.channel === name)) {
+        activeRecordings.push({
+          channel: name,
+          target: s.TargetIP || 'Local',
+        });
+      }
+    } else if (isPlayback) {
+      activePlaybacks.push({
+        name: s.Name || 'Recorded Playback',
+        ip: s.TargetIP || 'Client',
+      });
+    } else if (
+      s.TargetIP &&
+      s.TargetIP !== 'none' &&
+      s.TargetIP !== ip &&
+      s.TargetIP !== '127.0.0.1' &&
+      s.TargetIP !== '::1' &&
+      s.TargetIP !== '[::1]'
+    ) {
+      if (!activeClients.some((c) => c.ip === s.TargetIP)) {
+        activeClients.push({
+          ip: s.TargetIP,
+          channel: s.Name ? `Ch ${s.Name}` : '',
+        });
+      }
+    }
+  });
+
+  // Check if the HDHR itself is currently writing an in-progress recording to its storage drive
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (Array.isArray(state.episodes)) {
+    state.episodes.forEach((ep) => {
+      if (ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1) {
+        const epLabel = ep.EpisodeTitle ? `${ep.Title}: ${ep.EpisodeTitle}` : (ep.Title || 'DVR Recording');
+        const fullLabel = ep.ChannelNumber ? `${epLabel} (Ch ${ep.ChannelNumber})` : epLabel;
+        if (!activeRecordings.some((r) => r.channel === fullLabel)) {
+          activeRecordings.push({
+            channel: fullLabel,
+            target: 'HDHR Storage',
+          });
+        }
+      }
+    });
+  }
+
+  state.activePlaybacks = activePlaybacks;
+  return { activeClients, activeRecordings, activePlaybacks };
+}
+
 async function updateSystemLiveStatus() {
   const ip = state.currentIp;
   try {
@@ -555,104 +728,36 @@ async function updateSystemLiveStatus() {
       console.warn('Could not fetch /status.json for system status:', e);
     }
 
-    // 2. Parse active clients and active recordings
-    const physicalTuners = statusItems.filter((item) =>
-      item.Resource && item.Resource.toLowerCase().startsWith('tuner')
-    );
-    const liveSessions = statusItems.filter((item) =>
-      !item.Resource || !item.Resource.toLowerCase().startsWith('tuner')
-    );
+    // 2. Parse active clients, active recordings, and active playbacks
+    const { activeClients, activeRecordings, activePlaybacks } = parseDeviceStatus(statusItems, ip);
 
-    const activeClients = [];
-    const activeRecordings = [];
-
-    // Check physical tuners for direct external clients
-    physicalTuners.forEach((tuner) => {
-      const targetIp = tuner.TargetIP;
-      const isExternalIp =
-        targetIp &&
-        targetIp !== 'none' &&
-        targetIp !== '127.0.0.1' &&
-        targetIp !== '::1' &&
-        targetIp !== '[::1]' &&
-        targetIp !== ip;
-
-      const hasChannel = Boolean(tuner.VctNumber || tuner.VctName);
-
-      if (hasChannel && isExternalIp) {
-        const chLabel = tuner.VctNumber
-          ? `Ch ${tuner.VctNumber}${tuner.VctName ? ' ' + tuner.VctName : ''}`
-          : (tuner.VctName || tuner.Resource);
-
-        if (!activeClients.some((c) => c.ip === targetIp)) {
-          activeClients.push({
-            ip: targetIp,
-            channel: chLabel,
-          });
-        }
-      }
-    });
-
-    // Check liveSessions (sessions from HTTP streaming or DVR record engines)
-    liveSessions.forEach((s) => {
-      const isRecord =
-        (s.Resource && s.Resource.toLowerCase().includes('record')) ||
-        (s.Name && s.Name.toLowerCase().includes('record'));
-
-      if (isRecord) {
-        const name = s.Name ? `Ch ${s.Name}` : 'DVR Recording';
-        if (!activeRecordings.some((r) => r.channel === name)) {
-          activeRecordings.push({
-            channel: name,
-            target: s.TargetIP || 'Local',
-          });
-        }
-      } else if (
-        s.TargetIP &&
-        s.TargetIP !== 'none' &&
-        s.TargetIP !== ip &&
-        s.TargetIP !== '127.0.0.1' &&
-        s.TargetIP !== '::1' &&
-        s.TargetIP !== '[::1]'
-      ) {
-        if (!activeClients.some((c) => c.ip === s.TargetIP)) {
-          activeClients.push({
-            ip: s.TargetIP,
-            channel: s.Name ? `Ch ${s.Name}` : '',
-          });
-        }
-      }
-    });
-
-    // Check if the HDHR itself is currently writing an in-progress recording to its storage drive
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (Array.isArray(state.episodes)) {
-      state.episodes.forEach((ep) => {
-        if (ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1) {
-          const epLabel = ep.EpisodeTitle ? `${ep.Title}: ${ep.EpisodeTitle}` : (ep.Title || 'DVR Recording');
-          const fullLabel = ep.ChannelNumber ? `${epLabel} (Ch ${ep.ChannelNumber})` : epLabel;
-          if (!activeRecordings.some((r) => r.channel === fullLabel)) {
-            activeRecordings.push({
-              channel: fullLabel,
-              target: 'HDHR Storage',
-            });
-          }
-        }
-      });
-    }
-
-    // 3. Render Active Clients
+    // 3. Render Active Clients & Playbacks
     if (infoActiveClients) {
-      if (activeClients.length === 0) {
+      if (activeClients.length === 0 && activePlaybacks.length === 0) {
         infoActiveClients.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
       } else {
-        const countText = activeClients.length === 1 ? '1 Streaming' : `${activeClients.length} Streaming`;
-        infoActiveClients.innerHTML = `
-          <a href="#tuners" class="status-link" title="View details on Tuners tab">
-            <span class="badge badge-active-client">${countText}</span>
-            <span class="status-arrow">Tuners ↗</span>
-          </a>
-        `;
+        let html = '';
+        if (activeClients.length > 0) {
+          const countText = activeClients.length === 1 ? '1 Streaming' : `${activeClients.length} Streaming`;
+          const clientDetails = activeClients.map((c) => `${c.ip} (${c.channel || 'Live'})`).join('\n');
+          html += `
+            <a href="#tuners" class="status-link" title="${clientDetails} • View details on Tuners tab">
+              <span class="badge badge-active-client">📺 ${countText}</span>
+              <span class="status-arrow">Tuners ↗</span>
+            </a>
+          `;
+        }
+        if (activePlaybacks.length > 0) {
+          const countText = activePlaybacks.length === 1 ? '1 Playback' : `${activePlaybacks.length} Playbacks`;
+          const pbDetails = activePlaybacks.map((p) => `${p.name} on ${p.ip}`).join('\n');
+          html += `
+            <a href="#recordings" class="status-link status-link-playback" title="${pbDetails} • View details on Recordings tab">
+              <span class="badge badge-active-playback">▶️ ${countText}</span>
+              <span class="status-arrow">Recordings ↗</span>
+            </a>
+          `;
+        }
+        infoActiveClients.innerHTML = html;
       }
     }
 
@@ -897,6 +1002,7 @@ async function fetchTuners() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const tuners = await res.json();
     state.tuners = tuners;
+    parseDeviceStatus(tuners, ip);
     renderTuners(tuners);
     connectionDot.className = 'status-dot connected';
   } catch (err) {
@@ -1707,6 +1813,8 @@ function startPolling() {
         fetchTuners();
       } else if (state.activeTab === 'system') {
         updateSystemLiveStatus();
+      } else if (state.activeTab === 'recordings') {
+        updateRecordingsLiveStatus();
       }
     }
   }, state.pollInterval);
@@ -1716,6 +1824,86 @@ function stopPolling() {
   if (state.pollTimer) {
     clearInterval(state.pollTimer);
     state.pollTimer = null;
+  }
+}
+
+async function updateRecordingsLiveStatus() {
+  const ip = state.currentIp;
+  try {
+    const statusRes = await fetch(`http://${ip}/status.json`);
+    if (!statusRes.ok) return;
+    const statusItems = await statusRes.json();
+    if (!Array.isArray(statusItems)) return;
+    state.tuners = statusItems;
+    parseDeviceStatus(statusItems, ip);
+    updateEpisodePlaybackBadges();
+  } catch (e) {
+    // Non-critical, ignore polling errors
+  }
+}
+
+function updateEpisodePlaybackBadges() {
+  if (!state.hasDvr) return;
+
+  if (state.dvrSubView === 'episodes') {
+    const cards = recordingsContainer.querySelectorAll('.recording-card');
+    cards.forEach((card) => {
+      const ep = card._episodeData;
+      if (!ep) return;
+
+      const matchingPlaybacks = (state.activePlaybacks || []).filter((pb) => isEpisodeMatchingPlayback(ep, pb));
+      const isPlaying = matchingPlaybacks.length > 0;
+      card.classList.toggle('is-playing', isPlaying);
+
+      const metaEl = card.querySelector('.recording-meta');
+      if (!metaEl) return;
+
+      let badgeEl = metaEl.querySelector('.badge-playing');
+      if (isPlaying) {
+        const clientIps = matchingPlaybacks.map((p) => p.ip).join(', ');
+        const badgeText = `▶️ Playing (${clientIps})`;
+        if (badgeEl) {
+          badgeEl.textContent = badgeText;
+          badgeEl.title = `Streaming playback to ${clientIps}`;
+        } else {
+          badgeEl = document.createElement('span');
+          badgeEl.className = 'badge badge-playing';
+          badgeEl.textContent = badgeText;
+          badgeEl.title = `Streaming playback to ${clientIps}`;
+          metaEl.insertBefore(badgeEl, metaEl.firstChild);
+        }
+      } else if (badgeEl) {
+        badgeEl.remove();
+      }
+    });
+  } else if (state.dvrSubView === 'series') {
+    const cards = recordingsContainer.querySelectorAll('.recording-card');
+    cards.forEach((card) => {
+      const seriesId = card.querySelector('.btn-view-series-episodes')?.getAttribute('data-series-id');
+      if (!seriesId) return;
+
+      const matchEpisodes = state.episodes.filter((ep) => ep.SeriesID === seriesId);
+      const hasPlayingEp = matchEpisodes.some((ep) =>
+        (state.activePlaybacks || []).some((pb) => isEpisodeMatchingPlayback(ep, pb))
+      );
+
+      card.classList.toggle('is-playing', hasPlayingEp);
+      const metaEl = card.querySelector('.recording-meta');
+      if (!metaEl) return;
+
+      let badgeEl = metaEl.querySelector('.badge-playing');
+      if (hasPlayingEp) {
+        if (!badgeEl) {
+          badgeEl = document.createElement('span');
+          badgeEl.className = 'badge badge-playing';
+          badgeEl.textContent = '▶️ Playing';
+          badgeEl.title = 'An episode in this series is currently playing';
+          metaEl.insertBefore(badgeEl, metaEl.firstChild);
+        }
+      } else if (badgeEl) {
+        badgeEl.remove();
+      }
+    });
   }
 }
 
@@ -2131,6 +2319,20 @@ async function fetchRecordings(isBackground = false) {
     // Also fetch scheduled recording rules from Cloud API using DeviceAuth
     await fetchScheduledRules();
 
+    // Fetch live status to identify any active playback sessions
+    try {
+      const statusRes = await fetch(`http://${ip}/status.json`);
+      if (statusRes.ok) {
+        const statusItems = await statusRes.json();
+        if (Array.isArray(statusItems)) {
+          state.tuners = statusItems;
+          parseDeviceStatus(statusItems, ip);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch status for DVR playback info:', e);
+    }
+
     renderCurrentDvrSubView();
   } catch (err) {
     console.info('No DVR engine found or request failed:', err.message);
@@ -2228,7 +2430,13 @@ function renderEpisodes(episodes) {
   }
   episodes.forEach((ep, epIndex) => {
     const card = document.createElement('div');
-    card.className = 'recording-card';
+    card._episodeData = ep;
+    card.setAttribute('data-ep-index', epIndex);
+
+    // Check if this episode is currently playing back
+    const matchingPlaybacks = (state.activePlaybacks || []).filter((pb) => isEpisodeMatchingPlayback(ep, pb));
+    const isPlaying = matchingPlaybacks.length > 0;
+    card.className = `recording-card ${isPlaying ? 'is-playing' : ''}`;
 
     const recordedDate = ep.StartTime ? new Date(ep.StartTime * 1000).toLocaleDateString() : '—';
     const durationSec = (ep.EndTime && ep.StartTime) ? (ep.EndTime - ep.StartTime) : (ep.Duration || 0);
@@ -2265,6 +2473,16 @@ function renderEpisodes(episodes) {
     if (ep.EpisodeTitle) filenameParts.push(ep.EpisodeTitle);
     const suggestedFilename = filenameParts.join(' - ').replace(/[^a-zA-Z0-9_\- ]/g, '_').trim() + '.mpg';
 
+    let playingDisplay = '';
+    if (isPlaying) {
+      const clientIps = matchingPlaybacks.map((p) => p.ip).join(', ');
+      playingDisplay = `
+        <span class="badge badge-playing" title="Streaming playback to ${clientIps}">
+          ▶️ Playing (${clientIps})
+        </span>
+      `;
+    }
+
     card.innerHTML = `
       <div class="recording-top">
         <img src="${posterUrl}" class="recording-poster" alt="${ep.Title || 'Show'}" loading="lazy" onerror="this.src='icon.svg'" />
@@ -2276,6 +2494,7 @@ function renderEpisodes(episodes) {
       </div>
 
       <div class="recording-meta">
+        ${playingDisplay}
         <span class="recording-meta-item">📅 ${recordedDate}</span>
         <span class="recording-meta-item">⏱️ ${durationMin}</span>
         ${sizeDisplay ? `<span class="recording-meta-item" id="ep-size-${epIndex}"><strong>${sizeDisplay}</strong></span>` : ''}
@@ -2397,13 +2616,18 @@ function renderSeries(seriesList) {
   recordingsContainer.innerHTML = '';
   seriesList.forEach((s) => {
     const card = document.createElement('div');
-    card.className = 'recording-card';
-    const posterUrl = s.ImageURL || 'icon.svg';
-    const recordedDate = s.StartTime ? new Date(s.StartTime * 1000).toLocaleDateString() : '—';
 
     // Count matching episodes
     const matchEpisodes = state.episodes.filter((ep) => ep.SeriesID === s.SeriesID);
     const matchCount = matchEpisodes.length;
+
+    // Check if any episode in this series is currently playing
+    const hasPlayingEp = matchEpisodes.some((ep) =>
+      (state.activePlaybacks || []).some((pb) => isEpisodeMatchingPlayback(ep, pb))
+    );
+    card.className = `recording-card ${hasPlayingEp ? 'is-playing' : ''}`;
+    const posterUrl = s.ImageURL || 'icon.svg';
+    const recordedDate = s.StartTime ? new Date(s.StartTime * 1000).toLocaleDateString() : '—';
 
     // Calculate total size for series
     let seriesTotalGb = 0;
@@ -2435,6 +2659,7 @@ function renderSeries(seriesList) {
       </div>
 
       <div class="recording-meta">
+        ${hasPlayingEp ? '<span class="badge badge-playing" title="An episode in this series is currently playing">▶️ Playing</span>' : ''}
         <span class="recording-meta-item">📅 Latest: ${recordedDate}</span>
         ${sizeDisplay ? `<span class="recording-meta-item"><strong>${sizeDisplay}</strong></span>` : ''}
       </div>
