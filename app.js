@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.33';
+const APP_VERSION = '2.0.34';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -2755,16 +2755,19 @@ async function gatherDiagnostics() {
         status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
         lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
         lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
-        recorded_files: recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status },
+        recorded_files: recordedRes.available
+          ? recordedRes.data
+          : { available: false, error: recordedRes.error, status: recordedRes.status, note: 'DVR storage engine not detected (normal for tuner-only setups)' },
       },
       tuner_history: state.tunerHistory && Object.keys(state.tunerHistory).length > 0 ? state.tunerHistory : null,
     };
 
     state.lastDiagnostics = rawBundle;
 
-    // Count available feeds
-    const feeds = [discoverRes, statusRes, lineupRes, lineupStatusRes, recordedRes];
-    const availableCount = feeds.filter((f) => f.available).length;
+    // Distinguish core tuner feeds from optional DVR engine feed
+    const coreFeeds = [discoverRes, statusRes, lineupRes, lineupStatusRes];
+    const coreCount = coreFeeds.filter((f) => f.available).length;
+    const dvrAvailable = recordedRes.available;
 
     renderDiagnosticsOutput();
 
@@ -2782,11 +2785,16 @@ async function gatherDiagnostics() {
       diagStatusBanner.classList.add('success');
       if (diagStatusIcon) diagStatusIcon.textContent = anyActive ? '✅' : '⚠️';
       if (diagStatusText) {
-        if (!anyActive) {
-          diagStatusText.textContent = `Gathered ${availableCount} of ${feeds.length} feeds. Notice: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
+        let msg = '';
+        if (dvrAvailable) {
+          msg = `Successfully gathered all 5 feeds (4 core tuner feeds + DVR storage).`;
         } else {
-          diagStatusText.textContent = `Successfully gathered ${availableCount} of ${feeds.length} diagnostic feeds from ${ip}.`;
+          msg = `Successfully gathered ${coreCount} of 4 core feeds (discover, status, lineup, scan) • DVR storage feed N/A.`;
         }
+        if (!anyActive) {
+          msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
+        }
+        diagStatusText.textContent = msg;
       }
     }
   } catch (err) {
@@ -2837,17 +2845,22 @@ function renderDiagnosticsOutput() {
   const bytes = new Blob([jsonStr]).size;
   const kbSize = (bytes / 1024).toFixed(1);
 
-  let availableFeeds = 0;
-  if (processed.device) {
-    for (const key of Object.keys(processed.device)) {
-      if (processed.device[key] && !processed.device[key].error) {
-        availableFeeds++;
-      }
+  const coreKeys = ['discover', 'status', 'lineup', 'lineup_status'];
+  let coreActive = 0;
+  coreKeys.forEach((k) => {
+    if (processed.device?.[k] && !processed.device[k].error && processed.device[k].available !== false) {
+      coreActive++;
     }
-  }
+  });
+  const dvrActive = Boolean(
+    processed.device?.recorded_files &&
+    !processed.device.recorded_files.error &&
+    processed.device.recorded_files.available !== false
+  );
+  const feedSummary = dvrActive ? `${coreActive + 1}/5 feeds (incl. DVR)` : `${coreActive}/4 core feeds (DVR N/A)`;
 
   if (diagOutputMeta) {
-    diagOutputMeta.textContent = `${kbSize} KB • ${availableFeeds} feeds active • ${shouldRedact ? 'Auth Redacted' : 'Full (Raw)'}`;
+    diagOutputMeta.textContent = `${kbSize} KB • ${feedSummary} • ${shouldRedact ? 'Auth Redacted' : 'Full (Raw)'}`;
   }
 
   if (diagOutputPre) {
