@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.31';
+const APP_VERSION = '2.0.32';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -2603,6 +2603,7 @@ function setupDiagnostics() {
   const btnGatherDiag = document.getElementById('btn-gather-diag');
   const btnCopyDiag = document.getElementById('btn-copy-diag');
   const btnDownloadDiag = document.getElementById('btn-download-diag');
+  const btnGithubIssue = document.getElementById('btn-github-issue');
   const diagRedactAuth = document.getElementById('diag-redact-auth');
 
   if (btnGatherDiag) {
@@ -2615,6 +2616,10 @@ function setupDiagnostics() {
 
   if (btnDownloadDiag) {
     btnDownloadDiag.addEventListener('click', () => downloadDiagnosticsJson());
+  }
+
+  if (btnGithubIssue) {
+    btnGithubIssue.addEventListener('click', () => openGitHubIssue());
   }
 
   if (diagRedactAuth) {
@@ -2726,9 +2731,11 @@ async function gatherDiagnostics() {
 
     renderDiagnosticsOutput();
 
-    // Show copy & download buttons
+    // Show copy, download & GitHub issue buttons
     if (btnCopyDiag) btnCopyDiag.classList.remove('hidden');
     if (btnDownloadDiag) btnDownloadDiag.classList.remove('hidden');
+    const btnGithubIssue = document.getElementById('btn-github-issue');
+    if (btnGithubIssue) btnGithubIssue.classList.remove('hidden');
 
     if (diagStatusBanner) {
       diagStatusBanner.classList.add('success');
@@ -2867,4 +2874,72 @@ function downloadDiagnosticsJson() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
+function openGitHubIssue() {
+  const ip = state.currentIp;
+  const dev = state.deviceInfo || {};
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+  // If diagnostics have been gathered, copy the full redacted JSON to clipboard
+  let fullLogsCopied = false;
+  if (state.lastDiagnostics) {
+    copyDiagnosticsToClipboard();
+    fullLogsCopied = true;
+  }
+
+  const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'} (${dev.DeviceID || ip})`;
+
+  let body = `### Problem Description\n<!-- Please describe the issue you are experiencing (e.g. signal dropouts, missing channels, tuner error) -->\n\n`;
+  body += `### Environment & Diagnostic Summary\n`;
+  body += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
+  body += `- **Device Model:** ${dev.ModelNumber || dev.FriendlyName || 'Unknown'}\n`;
+  body += `- **Device ID:** \`${dev.DeviceID || 'Unknown'}\`\n`;
+  body += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
+  body += `- **Device IP:** \`${ip}\`\n`;
+  body += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
+  body += `- **User Agent:** \`${navigator.userAgent}\`\n`;
+  body += `- **Active Tuners:** ${state.tuners ? state.tuners.length : 'Unknown'}\n`;
+  body += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
+
+  if (state.tuners && state.tuners.length > 0) {
+    const activeTuners = state.tuners.filter((t) => t.Vchannel || t.TargetIP || (t.SignalStrength && t.SignalStrength > 0));
+    if (activeTuners.length > 0) {
+      body += `### Current Tuner Status\n`;
+      activeTuners.forEach((t) => {
+        const name = formatTunerName(t.Resource || 'tuner');
+        body += `- **${name}:** Channel ${t.Vchannel || 'None'} | Signal: ${t.SignalStrength}% | SNR: ${t.SignalQuality}% | Sym: ${t.SymbolQuality}%\n`;
+      });
+      body += `\n`;
+    }
+  }
+
+  body += `### Diagnostic Logs\n`;
+  if (fullLogsCopied) {
+    body += `> 📋 *Full diagnostic logs have been copied to your clipboard. Paste them below if desired:*\n\n\`\`\`json\n\n\`\`\`\n`;
+  } else {
+    body += `<!-- You can also gather and attach full logs from the System tab -> Diagnostic Logs & Export -->\n`;
+  }
+
+  const maxUrlLen = 3500;
+  let fullUrl = `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+
+  if (fullUrl.length > maxUrlLen) {
+    const trimmedBody = body.slice(0, 2000) + `\n\n[Summary truncated for URL limits. Full logs copied to clipboard.]`;
+    fullUrl = `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(trimmedBody)}`;
+  }
+
+  if (fullLogsCopied) {
+    showCopyFeedback();
+    const diagStatusText = document.getElementById('diag-status-text');
+    const diagStatusBanner = document.getElementById('diag-status-banner');
+    if (diagStatusBanner && diagStatusText) {
+      diagStatusBanner.className = 'diag-status-banner success';
+      diagStatusBanner.classList.remove('hidden');
+      diagStatusText.textContent = 'Opening GitHub... Full diagnostic logs copied to clipboard to paste into your issue!';
+    }
+  }
+
+  window.open(fullUrl, '_blank', 'noopener,noreferrer');
+}
+
 
