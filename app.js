@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.37';
+const APP_VERSION = '2.0.38';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -3011,7 +3011,37 @@ function openGitHubIssue() {
   const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'}`;
 
   const anonymizedIp = anonymizeIp(ip);
-  let baseBody = `### Problem Description\n<!-- Please describe the issue you are experiencing (e.g. signal dropouts, missing channels, tuner error) -->\n\n`;
+  let baseBody = `### 🚨 Problem Description (Required)\n`;
+  baseBody += `> ✍️ **PLEASE DESCRIBE YOUR ISSUE HERE BEFORE SUBMITTING:**\n`;
+  baseBody += `> - *What is happening? (e.g. video freezing, pixelation, channels failing to tune, tuner error)*\n`;
+  baseBody += `> - *When did it start? Does it happen on specific channels or all channels?*\n\n`;
+  baseBody += `[Type your problem description here]\n\n`;
+  baseBody += `---\n\n`;
+
+  // Get tuner data from lastDiagnostics or state.tuners
+  const statusItems = Array.isArray(state.lastDiagnostics?.device?.status)
+    ? state.lastDiagnostics.device.status
+    : (Array.isArray(state.tuners) ? state.tuners : []);
+
+  // Filter for actual physical tuners (exclude session objects like "live", "record")
+  const physicalTuners = statusItems.filter((item) =>
+    item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+  );
+
+  // Active tuners are physical tuners currently tuning or streaming
+  const activeTuners = physicalTuners.filter((t) =>
+    Boolean(
+      t.VctNumber ||
+      t.Vchannel ||
+      (t.Channel && t.Channel !== 'none') ||
+      (t.TargetIP && t.TargetIP !== 'none' && t.TargetIP !== '127.0.0.1' && t.TargetIP !== '::1' && t.TargetIP !== '[::1]') ||
+      (t.SignalStrengthPercent && t.SignalStrengthPercent > 0) ||
+      (t.SignalStrength && t.SignalStrength > 0)
+    )
+  );
+
+  const totalTunerCount = dev.TunerCount || (physicalTuners.length > 0 ? physicalTuners.length : 'Unknown');
+
   baseBody += `### Environment & Diagnostic Summary\n`;
   baseBody += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
   baseBody += `- **Device Model:** ${dev.ModelNumber || 'HDHomeRun'}\n`;
@@ -3020,20 +3050,28 @@ function openGitHubIssue() {
   baseBody += `- **Device IP:** \`${anonymizedIp}\`\n`;
   baseBody += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
   baseBody += `- **User Agent:** \`${navigator.userAgent}\`\n`;
-  baseBody += `- **Active Tuners:** ${state.tuners ? state.tuners.length : 'Unknown'}\n`;
+  baseBody += `- **Total Tuners:** ${totalTunerCount}\n`;
+  baseBody += `- **Active Tuners:** ${activeTuners.length} (${activeTuners.length === 0 ? 'All tuners idle' : `${activeTuners.length} of ${totalTunerCount} in use`})\n`;
   baseBody += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
 
-  if (state.tuners && state.tuners.length > 0) {
-    const activeTuners = state.tuners.filter((t) => t.Vchannel || t.TargetIP || (t.SignalStrength && t.SignalStrength > 0));
+  if (physicalTuners.length > 0) {
+    baseBody += `### Current Tuner Status\n`;
     if (activeTuners.length > 0) {
-      baseBody += `### Current Tuner Status\n`;
       activeTuners.forEach((t) => {
         const name = formatTunerName(t.Resource || 'tuner');
-        baseBody += `- **${name}:** Channel ${t.Vchannel || 'None'} | Signal: ${t.SignalStrength}% | SNR: ${t.SignalQuality}% | Sym: ${t.SymbolQuality}%\n`;
+        const channelDisplay = t.VctNumber
+          ? `${t.VctNumber}${t.VctName ? ` (${t.VctName})` : ''}`
+          : (t.Vchannel || (t.Channel && t.Channel !== 'none' ? t.Channel : 'None'));
+        const strength = t.SignalStrengthPercent ?? t.SignalStrength ?? 0;
+        const snr = t.SignalQualityPercent ?? t.SignalQuality ?? 0;
+        const sym = t.SymbolQualityPercent ?? t.SymbolQuality ?? 0;
+        const clientTarget = (t.TargetIP && t.TargetIP !== 'none' && t.TargetIP !== '127.0.0.1' && t.TargetIP !== '::1' && t.TargetIP !== '[::1]')
+          ? ` | Client: ${anonymizeIp(t.TargetIP)}`
+          : '';
+        baseBody += `- **${name}:** Channel ${channelDisplay} | Signal: ${strength}% | SNR: ${snr}% | Sym: ${sym}%${clientTarget}\n`;
       });
       baseBody += `\n`;
     } else {
-      baseBody += `### Current Tuner Status\n`;
       baseBody += `> ⚠️ **Notice:** All tuners were idle when diagnostics were gathered. The HDHomeRun powers down its demodulator when idle; RF signal metrics (Signal Strength, SNR, Symbol Quality) require an active live stream in the HDHomeRun app, Plex, Channels, or VLC.\n\n`;
     }
   }
