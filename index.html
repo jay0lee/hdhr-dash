@@ -37,7 +37,7 @@
 
         <div class="device-selector-wrapper">
           <select id="device-select" title="Active Device">
-            <option value="10.1.0.4">HDHomeRun (10.1.0.4)</option>
+            <option value="">Detecting HDHomeRun...</option>
           </select>
           <span id="connection-status-dot" class="status-dot connected" title="Connected"></span>
         </div>
@@ -459,10 +459,10 @@
               </div>
             </div>
             <div class="card-footer-actions">
-              <button id="btn-reboot-check" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4'), '_blank')">
+              <button id="btn-reboot-check" class="btn btn-sm btn-secondary">
                 Open Device Web Admin ↗
               </button>
-              <button id="btn-system-log" class="btn btn-sm btn-secondary" onclick="window.open('http://' + (state?.currentIp || '10.1.0.4') + '/log.html', '_blank')">
+              <button id="btn-system-log" class="btn btn-sm btn-secondary">
                 System Log ↗
               </button>
               <a href="https://www.silicondust.com/support/downloads/firmware-changelog/" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-secondary">
@@ -483,7 +483,7 @@
             <div class="manual-add-section">
               <label for="input-custom-ip" class="text-sm font-semibold">Add Device IP Manually</label>
               <div class="ip-input-row mt-6">
-                <input type="text" id="input-custom-ip" placeholder="10.1.0.4 or 192.168.1.100" />
+                <input type="text" id="input-custom-ip" placeholder="192.168.1.100" />
                 <button id="btn-add-device" class="btn btn-primary">Add / Switch</button>
               </div>
             </div>

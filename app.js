@@ -7,7 +7,6 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const DEFAULT_IP = '10.1.0.4';
 const APP_VERSION = '2.0.38';
 
 // Immediately apply saved theme to documentElement to avoid flash
@@ -16,7 +15,7 @@ document.documentElement.setAttribute('data-theme', initialTheme);
 
 // Application State
 const state = {
-  currentIp: localStorage.getItem(STORAGE_ACTIVE_IP) || DEFAULT_IP,
+  currentIp: localStorage.getItem(STORAGE_ACTIVE_IP) || null,
   devices: JSON.parse(localStorage.getItem(STORAGE_DEVICES) || '[]'),
   deviceInfo: null,
   tuners: [],
@@ -184,6 +183,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupDiagnostics();
   setupPwa();
   renderAppInfo();
+
+  // Use SiliconDust discovery to find a local device before making LAN requests.
+  await discoverCloudDevices(true);
 
   // Populate device dropdown
   renderDeviceDropdown();
@@ -401,6 +403,15 @@ function renderDeviceDropdown() {
     deviceSelect.appendChild(opt);
   });
 
+  if (deviceSelect.options.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = 'No HDHomeRun detected';
+    opt.disabled = true;
+    opt.selected = true;
+    deviceSelect.appendChild(opt);
+  }
+
   deviceSelect.onchange = async () => {
     await switchDevice(deviceSelect.value);
   };
@@ -421,6 +432,12 @@ async function switchDevice(newIp) {
 
 async function loadDeviceDetails() {
   const ip = state.currentIp;
+  if (!ip) {
+    connectionDot.className = 'status-dot error';
+    showAlert('No HDHomeRun was detected. Allow local network access and try again.', 'error');
+    return;
+  }
+
   try {
     const res = await fetch(`http://${ip}/discover.json`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -461,7 +478,7 @@ async function loadDeviceDetails() {
   } catch (err) {
     console.warn('Could not load discover.json:', err);
     connectionDot.className = 'status-dot error';
-    showAlert(`Unable to connect to HDHomeRun at <code>${ip}</code>. Check your network or permissions.`, 'error');
+    showAlert('Local network access is required to connect to your HDHomeRun. Grant access in your browser or device settings, then refresh.', 'error');
   }
 }
 
@@ -701,10 +718,10 @@ async function loadChannelsCount() {
   }
 }
 
-async function discoverCloudDevices() {
+async function discoverCloudDevices(selectFirstDevice = false) {
   try {
     const res = await fetch('https://api.hdhomerun.com/discover');
-    if (!res.ok) return;
+    if (!res.ok) return [];
     const list = await res.json();
 
     if (Array.isArray(list) && list.length > 0) {
@@ -716,12 +733,22 @@ async function discoverCloudDevices() {
           StorageURL: dev.StorageURL,
         });
       });
+      if (selectFirstDevice && !state.currentIp) {
+        const firstDevice = list.find((dev) => dev.LocalIP);
+        if (firstDevice) {
+          state.currentIp = firstDevice.LocalIP;
+          localStorage.setItem(STORAGE_ACTIVE_IP, state.currentIp);
+        }
+      }
       renderDeviceDropdown();
       renderDiscoveredList();
+      return list;
     }
   } catch (e) {
     console.log('Cloud discovery skipped or offline:', e.message);
   }
+
+  return [];
 }
 
 function saveDevice(dev) {
@@ -766,14 +793,14 @@ function setupDeviceManagement() {
   const btnSystemLog = document.getElementById('btn-system-log');
   if (btnSystemLog) {
     btnSystemLog.addEventListener('click', () => {
-      window.open(`http://${state.currentIp || DEFAULT_IP}/log.html`, '_blank');
+      if (state.currentIp) window.open(`http://${state.currentIp}/log.html`, '_blank');
     });
   }
 
   const btnRebootCheck = document.getElementById('btn-reboot-check');
   if (btnRebootCheck) {
     btnRebootCheck.addEventListener('click', () => {
-      window.open(`http://${state.currentIp || DEFAULT_IP}`, '_blank');
+      if (state.currentIp) window.open(`http://${state.currentIp}`, '_blank');
     });
   }
 
@@ -2844,7 +2871,7 @@ function processDiagnostics(rawBundle, redact) {
   if (redact) {
     const redactValue = (val) => {
       if (typeof val === 'string') {
-        // Anonymize any IPv4 addresses (including within URLs like http://10.1.0.4/lineup.json)
+        // Anonymize any IPv4 addresses, including addresses embedded in URLs.
         let s = anonymizeIp(val);
 
         // Redact usernames in OS file paths (e.g. /Users/username/ or C:\Users\username\)
