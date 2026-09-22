@@ -8,7 +8,7 @@ const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
 const DEFAULT_IP = '10.1.0.4';
-const APP_VERSION = '2.0.36';
+const APP_VERSION = '2.0.37';
 
 // Immediately apply saved theme to documentElement to avoid flash
 const initialTheme = localStorage.getItem(STORAGE_THEME) || 'dark';
@@ -3007,68 +3007,118 @@ function openGitHubIssue() {
   const dev = state.deviceInfo || {};
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
-  // If diagnostics have been gathered, copy the full redacted JSON to clipboard
-  let fullLogsCopied = false;
-  if (state.lastDiagnostics) {
-    copyDiagnosticsToClipboard();
-    fullLogsCopied = true;
-  }
-
   // Issue title is clean: no serial number, no IP address
   const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'}`;
 
   const anonymizedIp = anonymizeIp(ip);
-  let body = `### Problem Description\n<!-- Please describe the issue you are experiencing (e.g. signal dropouts, missing channels, tuner error) -->\n\n`;
-  body += `### Environment & Diagnostic Summary\n`;
-  body += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
-  body += `- **Device Model:** ${dev.ModelNumber || 'HDHomeRun'}\n`;
-  body += `- **Device ID / Serial:** \`[REDACTED]\`\n`;
-  body += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
-  body += `- **Device IP:** \`${anonymizedIp}\`\n`;
-  body += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
-  body += `- **User Agent:** \`${navigator.userAgent}\`\n`;
-  body += `- **Active Tuners:** ${state.tuners ? state.tuners.length : 'Unknown'}\n`;
-  body += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
+  let baseBody = `### Problem Description\n<!-- Please describe the issue you are experiencing (e.g. signal dropouts, missing channels, tuner error) -->\n\n`;
+  baseBody += `### Environment & Diagnostic Summary\n`;
+  baseBody += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
+  baseBody += `- **Device Model:** ${dev.ModelNumber || 'HDHomeRun'}\n`;
+  baseBody += `- **Device ID / Serial:** \`[REDACTED]\`\n`;
+  baseBody += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
+  baseBody += `- **Device IP:** \`${anonymizedIp}\`\n`;
+  baseBody += `- **PWA Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
+  baseBody += `- **User Agent:** \`${navigator.userAgent}\`\n`;
+  baseBody += `- **Active Tuners:** ${state.tuners ? state.tuners.length : 'Unknown'}\n`;
+  baseBody += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
 
   if (state.tuners && state.tuners.length > 0) {
     const activeTuners = state.tuners.filter((t) => t.Vchannel || t.TargetIP || (t.SignalStrength && t.SignalStrength > 0));
     if (activeTuners.length > 0) {
-      body += `### Current Tuner Status\n`;
+      baseBody += `### Current Tuner Status\n`;
       activeTuners.forEach((t) => {
         const name = formatTunerName(t.Resource || 'tuner');
-        body += `- **${name}:** Channel ${t.Vchannel || 'None'} | Signal: ${t.SignalStrength}% | SNR: ${t.SignalQuality}% | Sym: ${t.SymbolQuality}%\n`;
+        baseBody += `- **${name}:** Channel ${t.Vchannel || 'None'} | Signal: ${t.SignalStrength}% | SNR: ${t.SignalQuality}% | Sym: ${t.SymbolQuality}%\n`;
       });
-      body += `\n`;
+      baseBody += `\n`;
     } else {
-      body += `### Current Tuner Status\n`;
-      body += `> ⚠️ **Notice:** All tuners were idle when diagnostics were gathered. The HDHomeRun powers down its demodulator when idle; RF signal metrics (Signal Strength, SNR, Symbol Quality) require an active live stream in the HDHomeRun app, Plex, Channels, or VLC.\n\n`;
+      baseBody += `### Current Tuner Status\n`;
+      baseBody += `> ⚠️ **Notice:** All tuners were idle when diagnostics were gathered. The HDHomeRun powers down its demodulator when idle; RF signal metrics (Signal Strength, SNR, Symbol Quality) require an active live stream in the HDHomeRun app, Plex, Channels, or VLC.\n\n`;
     }
   }
 
-  body += `### Diagnostic Logs\n`;
-  if (fullLogsCopied) {
-    body += `> 📋 *Full diagnostic logs have been copied to your clipboard (serials redacted & IPs anonymized). Paste them below if desired:*\n\n\`\`\`json\n\n\`\`\`\n`;
-  } else {
-    body += `<!-- You can also gather and attach full logs from the System tab -> Diagnostic Logs & Export -->\n`;
-  }
+  let fullUrl = '';
+  const MAX_URL_LEN = 6500;
 
-  const maxUrlLen = 3500;
-  let fullUrl = `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+  if (state.lastDiagnostics) {
+    const diagRedactAuth = document.getElementById('diag-redact-auth');
+    const shouldRedact = diagRedactAuth ? diagRedactAuth.checked : true;
+    const processed = processDiagnostics(state.lastDiagnostics, shouldRedact);
 
-  if (fullUrl.length > maxUrlLen) {
-    const trimmedBody = body.slice(0, 2000) + `\n\n[Summary truncated for URL limits. Full logs copied to clipboard.]`;
-    fullUrl = `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(trimmedBody)}`;
-  }
+    // Also copy to clipboard in case user needs raw export
+    copyDiagnosticsToClipboard();
 
-  if (fullLogsCopied) {
+    const makeUrl = (bodyText) =>
+      `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(bodyText)}`;
+
+    // 1. Try formatted JSON
+    let jsonStr = JSON.stringify(processed, null, 2);
+    let candidateBody = `${baseBody}### Diagnostic Logs\n<details open><summary>Diagnostic Logs (JSON)</summary>\n\n\`\`\`json\n${jsonStr}\n\`\`\`\n</details>\n`;
+    fullUrl = makeUrl(candidateBody);
+
+    // 2. If too large for URL, try minified JSON
+    if (fullUrl.length > MAX_URL_LEN) {
+      jsonStr = JSON.stringify(processed);
+      candidateBody = `${baseBody}### Diagnostic Logs\n<details open><summary>Diagnostic Logs (JSON)</summary>\n\n\`\`\`json\n${jsonStr}\n\`\`\`\n</details>\n`;
+      fullUrl = makeUrl(candidateBody);
+    }
+
+    // 3. If still too large, compact lineup and history
+    if (fullUrl.length > MAX_URL_LEN) {
+      const compacted = JSON.parse(JSON.stringify(processed));
+      if (compacted.tuner_history) {
+        const histKeys = Object.keys(compacted.tuner_history);
+        for (const k of histKeys) {
+          if (Array.isArray(compacted.tuner_history[k])) {
+            compacted.tuner_history[k] = compacted.tuner_history[k].slice(-5);
+          }
+        }
+      }
+      if (compacted.device && Array.isArray(compacted.device.lineup)) {
+        compacted.device.lineup = compacted.device.lineup.map((ch) => ({
+          GuideNumber: ch.GuideNumber,
+          GuideName: ch.GuideName,
+          ...(ch.DRM ? { DRM: ch.DRM } : {}),
+        }));
+      }
+
+      jsonStr = JSON.stringify(compacted);
+      candidateBody = `${baseBody}### Diagnostic Logs\n<details open><summary>Diagnostic Logs (JSON)</summary>\n\n\`\`\`json\n${jsonStr}\n\`\`\`\n</details>\n`;
+      fullUrl = makeUrl(candidateBody);
+
+      // If still too long, progressively slice lineup
+      if (fullUrl.length > MAX_URL_LEN && compacted.device && Array.isArray(compacted.device.lineup)) {
+        const totalCh = compacted.device.lineup.length;
+        let sliceCount = Math.min(compacted.device.lineup.length, 50);
+        while (sliceCount > 5 && fullUrl.length > MAX_URL_LEN) {
+          compacted.device.lineup = compacted.device.lineup.slice(0, sliceCount);
+          compacted.device._lineup_note = `Showing ${sliceCount} of ${totalCh} channels (compacted for GitHub URL limit).`;
+          jsonStr = JSON.stringify(compacted);
+          candidateBody = `${baseBody}### Diagnostic Logs\n<details open><summary>Diagnostic Logs (JSON)</summary>\n\n\`\`\`json\n${jsonStr}\n\`\`\`\n</details>\n`;
+          fullUrl = makeUrl(candidateBody);
+          sliceCount = Math.floor(sliceCount * 0.7);
+        }
+      }
+    }
+
+    // 4. Absolute fallback if extreme URL length remains
+    if (fullUrl.length > MAX_URL_LEN) {
+      const trimmedBody = `${baseBody}### Diagnostic Logs\n> 📋 *Note: Diagnostic logs exceeded GitHub's URL length limit and were copied to your clipboard. Paste them below if desired:*\n\n\`\`\`json\n\n\`\`\`\n`;
+      fullUrl = makeUrl(trimmedBody);
+    }
+
     showCopyFeedback();
     const diagStatusText = document.getElementById('diag-status-text');
     const diagStatusBanner = document.getElementById('diag-status-banner');
     if (diagStatusBanner && diagStatusText) {
       diagStatusBanner.className = 'diag-status-banner success';
       diagStatusBanner.classList.remove('hidden');
-      diagStatusText.textContent = 'Opening GitHub... Full diagnostic logs copied to clipboard (anonymized) to paste into your issue!';
+      diagStatusText.textContent = 'Opening GitHub issue with pre-filled diagnostic logs!';
     }
+  } else {
+    baseBody += `### Diagnostic Logs\n<!-- Gather and attach diagnostic logs from the System tab -> Diagnostic Logs & Export -->\n`;
+    fullUrl = `https://github.com/jay0lee/hdhr-dash/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(baseBody)}`;
   }
 
   window.open(fullUrl, '_blank', 'noopener,noreferrer');
