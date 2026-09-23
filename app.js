@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.65';
+const APP_VERSION = '2.0.66';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -551,17 +551,62 @@ async function switchDevice(newIp) {
   if (!newIp) return;
   state.currentIp = newIp;
   localStorage.setItem(STORAGE_ACTIVE_IP, newIp);
+
+  // 1. Reset all device-specific state
   state.lineup = [];
-  state.recordings = [];
+  state.tuners = [];
+  state.series = [];
+  state.episodes = [];
   state.hasDvr = false;
   state.dvrStorageUrl = null;
+
+  // 2. Reset / hide tab badges while switching
+  if (recordingsCountBadge) {
+    recordingsCountBadge.classList.add('hidden');
+    recordingsCountBadge.textContent = '0';
+  }
+  if (lineupCountBadge) {
+    lineupCountBadge.classList.add('hidden');
+    lineupCountBadge.textContent = '0';
+  }
+  if (tunerSummaryBadge) {
+    tunerSummaryBadge.textContent = 'Updating...';
+    tunerSummaryBadge.className = 'badge';
+  }
 
   hideAlert();
   const noticeEl = document.getElementById('no-device-notice');
   if (noticeEl) noticeEl.classList.add('hidden');
 
-  await loadDeviceDetails();
-  await refreshActiveTab();
+  // 3. Update device selectors immediately
+  renderDeviceDropdown();
+  renderDiscoveredList();
+
+  // 4. Load device details (populates state.deviceInfo, state.hasDvr, system tab fields, live status, channels)
+  const connected = await loadDeviceDetails();
+
+  // Re-render selectors to reflect newly fetched model name / storage ID
+  renderDeviceDropdown();
+  renderDiscoveredList();
+
+  if (connected) {
+    // 5. Always fetch DVR recordings to update recording count badge and library immediately
+    if (state.hasDvr) {
+      await fetchRecordings(state.activeTab !== 'recordings');
+    } else {
+      if (recordingsCountBadge) recordingsCountBadge.classList.add('hidden');
+      if (dvrNotDetected) dvrNotDetected.classList.remove('hidden');
+      if (recordingsContainer) recordingsContainer.innerHTML = '';
+      if (dvrStorageBarCard) dvrStorageBarCard.classList.add('hidden');
+    }
+
+    // 6. Refresh current active tab view if not system (since loadDeviceDetails already populated system)
+    if (state.activeTab !== 'system') {
+      await refreshActiveTab();
+    }
+  } else {
+    await refreshActiveTab();
+  }
 }
 
 async function loadDeviceDetails() {
@@ -970,6 +1015,23 @@ async function updateSystemLiveStatus() {
     // 2. Parse active clients, active recordings, and active playbacks
     const { activeClients, activeRecordings, activePlaybacks } = parseDeviceStatus(statusItems, ip);
 
+    // Update Tuner Summary Badge in header
+    if (tunerSummaryBadge) {
+      if (state.deviceInfo?.StorageID && !state.deviceInfo?.TunerCount) {
+        tunerSummaryBadge.textContent = '0 Tuners';
+        tunerSummaryBadge.className = 'badge';
+      } else {
+        const physicalTuners = statusItems.filter((item) =>
+          item.Resource && item.Resource.toLowerCase().startsWith('tuner')
+        );
+        if (physicalTuners.length > 0) {
+          const activeCount = physicalTuners.filter((t) => t.TargetIP && t.TargetIP !== 'none').length;
+          tunerSummaryBadge.textContent = `${activeCount} / ${physicalTuners.length} Active`;
+          tunerSummaryBadge.className = `badge ${activeCount > 0 ? 'badge-hd' : ''}`;
+        }
+      }
+    }
+
     // 3. Render Active Clients & Playbacks
     if (infoActiveClients) {
       if (activeClients.length === 0 && activePlaybacks.length === 0) {
@@ -1163,6 +1225,9 @@ async function initDeviceConnection() {
     if (connected) {
       const noticeEl = document.getElementById('no-device-notice');
       if (noticeEl) noticeEl.classList.add('hidden');
+      if (state.hasDvr) {
+        fetchRecordings(state.activeTab !== 'recordings').catch(() => {});
+      }
       // Background check for other devices
       discoverLocalMdns().catch(() => {});
       discoverCloudDevices().catch(() => {});
@@ -1180,6 +1245,9 @@ async function initDeviceConnection() {
     if (connected) {
       const noticeEl = document.getElementById('no-device-notice');
       if (noticeEl) noticeEl.classList.add('hidden');
+      if (state.hasDvr) {
+        fetchRecordings(state.activeTab !== 'recordings').catch(() => {});
+      }
       return;
     }
   }
@@ -1197,6 +1265,9 @@ async function initDeviceConnection() {
       if (connected) {
         const noticeEl = document.getElementById('no-device-notice');
         if (noticeEl) noticeEl.classList.add('hidden');
+        if (state.hasDvr) {
+          fetchRecordings(state.activeTab !== 'recordings').catch(() => {});
+        }
         return;
       }
     }
@@ -3165,10 +3236,14 @@ async function fetchRecordings(isBackground = false) {
   } catch (err) {
     console.info('No DVR engine found or request failed:', err.message);
     state.hasDvr = false;
-    recordingsCountBadge.classList.add('hidden');
-    recordingsContainer.innerHTML = '';
-    dvrNotDetected.classList.remove('hidden');
-    dvrEngineInfo.textContent = 'No recording engine detected';
+    state.series = [];
+    state.episodes = [];
+    if (recordingsCountBadge) recordingsCountBadge.classList.add('hidden');
+    if (!isBackground) {
+      if (recordingsContainer) recordingsContainer.innerHTML = '';
+      if (dvrNotDetected) dvrNotDetected.classList.remove('hidden');
+      if (dvrEngineInfo) dvrEngineInfo.textContent = 'No recording engine detected';
+    }
   }
 }
 
