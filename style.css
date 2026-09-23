@@ -1938,6 +1938,16 @@ body {
   color: var(--accent-cyan);
 }
 
+.status-link.disabled {
+  pointer-events: none;
+  cursor: default;
+  opacity: 1;
+}
+
+.status-link.disabled .status-arrow {
+  display: none;
+}
+
 /* ==========================================================================
    Clickable Tuner Cards & Per-Tuner Detail View
    ========================================================================== */

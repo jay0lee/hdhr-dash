@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.64';
+const APP_VERSION = '2.0.65';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -481,7 +481,11 @@ async function refreshActiveTab() {
       await fetchTuners();
       break;
     case 'lineup':
-      if (state.lineup.length === 0 || !state.lineup.some((ch) => ch.Frequency)) {
+      if (state.deviceInfo?.StorageID && !state.deviceInfo?.TunerCount) {
+        state.lineup = [];
+        if (lineupCountBadge) lineupCountBadge.classList.add('hidden');
+        renderLineup();
+      } else if (state.lineup.length === 0 || !state.lineup.some((ch) => ch.Frequency)) {
         await fetchLineup();
       } else {
         updateLineupStats();
@@ -527,7 +531,8 @@ function renderDeviceDropdown() {
 
   allIps.forEach((ip) => {
     const dev = state.devices.find((d) => (d.ip || d.LocalIP) === ip);
-    const label = dev?.ModelNumber ? `${dev.ModelNumber} (${ip})` : `HDHomeRun (${ip})`;
+    const model = dev?.ModelNumber || dev?.FriendlyName || (dev?.StorageID ? 'HDHomeRun RECORD' : 'HDHomeRun');
+    const label = `${model} (${ip})`;
     const opt = document.createElement('option');
     opt.value = ip;
     opt.textContent = label;
@@ -569,6 +574,20 @@ async function loadDeviceDetails() {
     infoFirmware.textContent = '—';
     infoTuners.textContent = '—';
     infoIp.textContent = '—';
+    const labelInfoId = document.getElementById('label-info-id');
+    if (labelInfoId) labelInfoId.textContent = 'Device ID';
+    const labelInfoFirmware = document.getElementById('label-info-firmware');
+    if (labelInfoFirmware) labelInfoFirmware.textContent = 'Firmware';
+    const infoTunersLink = document.getElementById('info-tuners-link');
+    if (infoTunersLink) {
+      infoTunersLink.classList.remove('disabled');
+      infoTunersLink.setAttribute('href', '#tuners');
+    }
+    const infoChannelsLink = document.getElementById('info-channels-link');
+    if (infoChannelsLink) {
+      infoChannelsLink.classList.remove('disabled');
+      infoChannelsLink.setAttribute('href', '#channels');
+    }
     if (labelInfoIp) labelInfoIp.textContent = 'Hostname / IP';
     if (infoActiveClients) infoActiveClients.textContent = '—';
     if (infoActiveRecordings) infoActiveRecordings.textContent = '—';
@@ -585,14 +604,41 @@ async function loadDeviceDetails() {
     state.deviceInfo = data;
     connectionDot.className = 'status-dot connected';
 
+    const isRecordEngine = Boolean(data.StorageID && !data.TunerCount);
+
     // Populate System view
-    infoModel.textContent = data.ModelNumber || 'Unknown Model';
-    infoId.textContent = data.DeviceID || '—';
-    infoFirmware.textContent = data.FirmwareVersion || data.FirmwareName || '—';
-    infoTuners.textContent = data.TunerCount ? `${data.TunerCount} Tuners` : '—';
+    infoModel.textContent = data.ModelNumber || data.FriendlyName || (isRecordEngine ? 'HDHomeRun RECORD' : 'Unknown Model');
+
+    const labelInfoId = document.getElementById('label-info-id');
+    if (labelInfoId) {
+      labelInfoId.textContent = isRecordEngine ? 'Storage ID' : 'Device ID';
+    }
+    infoId.textContent = data.DeviceID || data.StorageID || '—';
+
+    const labelInfoFirmware = document.getElementById('label-info-firmware');
+    if (labelInfoFirmware) {
+      labelInfoFirmware.textContent = isRecordEngine ? 'Software Version' : 'Firmware';
+    }
+    infoFirmware.textContent = data.FirmwareVersion || data.FirmwareName || data.Version || '—';
+
+    const infoTunersLink = document.getElementById('info-tuners-link');
+    if (isRecordEngine) {
+      infoTuners.textContent = 'None (Storage Engine)';
+      if (infoTunersLink) {
+        infoTunersLink.classList.add('disabled');
+        infoTunersLink.removeAttribute('href');
+      }
+    } else {
+      infoTuners.textContent = data.TunerCount ? `${data.TunerCount} Tuners` : '—';
+      if (infoTunersLink) {
+        infoTunersLink.classList.remove('disabled');
+        infoTunersLink.setAttribute('href', '#tuners');
+      }
+    }
+
     infoIp.textContent = ip;
     if (labelInfoIp) {
-      const isIp = /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.includes(':');
+      const isIp = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(ip) || ip.includes(':');
       labelInfoIp.textContent = isIp ? 'IP Address' : 'Hostname';
     }
 
@@ -609,13 +655,38 @@ async function loadDeviceDetails() {
     saveDevice({
       ip,
       ModelNumber: data.ModelNumber,
+      FriendlyName: data.FriendlyName,
       DeviceID: data.DeviceID,
+      StorageID: data.StorageID,
       StorageURL: data.StorageURL,
+      Version: data.Version,
+      FirmwareVersion: data.FirmwareVersion,
     });
 
     // Update live HDHR status: active clients, active recordings, and storage (used/free)
     await updateSystemLiveStatus();
-    await loadChannelsCount();
+
+    if (isRecordEngine) {
+      state.lineup = [];
+      const infoChannelsLink = document.getElementById('info-channels-link');
+      if (infoChannelsLink) {
+        infoChannelsLink.classList.add('disabled');
+        infoChannelsLink.removeAttribute('href');
+      }
+      if (infoChannels) {
+        infoChannels.textContent = 'None (Storage Engine)';
+      }
+      if (lineupCountBadge) {
+        lineupCountBadge.classList.add('hidden');
+      }
+    } else {
+      const infoChannelsLink = document.getElementById('info-channels-link');
+      if (infoChannelsLink) {
+        infoChannelsLink.classList.remove('disabled');
+        infoChannelsLink.setAttribute('href', '#channels');
+      }
+      await loadChannelsCount();
+    }
 
     // Check for firmware updates
     checkFirmwareUpdate(data);
@@ -630,8 +701,19 @@ async function loadDeviceDetails() {
 
 async function checkFirmwareUpdate(deviceData) {
   const badge = document.getElementById('firmware-status-badge');
+  const btnCheck = document.getElementById('btn-check-firmware');
   if (!badge) return;
 
+  const isRecordEngine = Boolean(deviceData?.StorageID && !deviceData?.TunerCount);
+  if (isRecordEngine) {
+    badge.className = 'badge badge-hd';
+    badge.textContent = 'Record Engine';
+    badge.title = `HDHomeRun RECORD software version ${deviceData?.Version || ''}`;
+    if (btnCheck) btnCheck.classList.add('hidden');
+    return;
+  }
+
+  if (btnCheck) btnCheck.classList.remove('hidden');
   badge.className = 'badge';
   badge.textContent = 'Checking...';
 
@@ -1231,18 +1313,19 @@ function renderDiscoveredList() {
   state.devices.forEach((d) => {
     const ip = d.ip || d.LocalIP;
     const isAuto = d.source === 'auto' || (!d.source && ip && ip.includes('.local'));
+    const modelName = d.ModelNumber || d.FriendlyName || (d.StorageID ? 'HDHomeRun RECORD' : 'HDHomeRun');
     const item = document.createElement('div');
     item.className = `device-item ${ip === state.currentIp ? 'active' : ''}`;
     item.innerHTML = `
       <div class="device-item-info">
         <div class="device-item-header">
-          <strong>${d.ModelNumber || 'HDHomeRun'}</strong>
+          <strong>${modelName}</strong>
           <button type="button" class="badge badge-btn ${isAuto ? 'badge-auto' : 'badge-manual'} btn-toggle-source" data-ip="${ip}" title="Click to toggle Auto / Manual note">
             ${isAuto ? 'Auto' : 'Manual'}
           </button>
         </div>
         <span class="text-sm text-muted">(${ip})</span>
-        ${d.DeviceID ? `<div class="text-sm font-mono text-muted">${d.DeviceID}</div>` : ''}
+        ${d.DeviceID ? `<div class="text-sm font-mono text-muted">${d.DeviceID}</div>` : (d.StorageID ? `<div class="text-sm font-mono text-muted">Storage: ${d.StorageID}</div>` : '')}
       </div>
       <div class="device-item-actions">
         ${
@@ -1330,6 +1413,21 @@ async function fetchTuners() {
     tunerSummaryBadge.className = 'badge';
     return;
   }
+
+  // Handle dedicated record/storage engines with no tuners
+  if (state.deviceInfo?.StorageID && !state.deviceInfo?.TunerCount) {
+    tunersGrid.innerHTML = `
+      <div class="empty-state" style="grid-column: 1 / -1; padding: 32px 16px;">
+        <p><strong>Dedicated Storage Engine</strong></p>
+        <p class="text-sm text-muted mt-6">This device (${state.deviceInfo.FriendlyName || 'HDHomeRun RECORD'}) is a DVR recording server and does not have TV tuners.</p>
+        <p class="text-sm text-muted mt-8">To monitor physical tuners, select an HDHomeRun tuner from the device menu in the header.</p>
+      </div>`;
+    tunerSummaryBadge.textContent = '0 Tuners';
+    tunerSummaryBadge.className = 'badge';
+    connectionDot.className = 'status-dot connected';
+    return;
+  }
+
   try {
     if (state.hasDvr && state.episodes.length === 0) {
       fetchRecordings(true);
@@ -2432,6 +2530,25 @@ async function fetchLineup(isBackground = false) {
     return;
   }
 
+  // Handle dedicated record/storage engines with no tuners/lineup
+  if (state.deviceInfo?.StorageID && !state.deviceInfo?.TunerCount) {
+    state.lineup = [];
+    if (lineupCountBadge) {
+      lineupCountBadge.classList.add('hidden');
+    }
+    if (!isBackground) {
+      lineupTbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="empty-state" style="padding: 32px 16px;">
+            <p><strong>Dedicated Storage Engine</strong></p>
+            <p class="text-sm text-muted mt-6">This device (${state.deviceInfo.FriendlyName || 'HDHomeRun RECORD'}) is a DVR recording server and does not host a broadcast channel lineup.</p>
+            <p class="text-sm text-muted mt-8">To browse channels or stream live TV, select an HDHomeRun tuner from the device menu in the header.</p>
+          </td>
+        </tr>`;
+    }
+    return;
+  }
+
   if (lineupFetchPromise) {
     return lineupFetchPromise;
   }
@@ -2706,7 +2823,18 @@ function renderLineup() {
   renderActiveFilterChips();
 
   if (filtered.length === 0) {
-    lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No matching channels found.</td></tr>';
+    if (state.deviceInfo?.StorageID && !state.deviceInfo?.TunerCount) {
+      lineupTbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="empty-state" style="padding: 32px 16px;">
+            <p><strong>Dedicated Storage Engine</strong></p>
+            <p class="text-sm text-muted mt-6">This device (${state.deviceInfo.FriendlyName || 'HDHomeRun RECORD'}) is a DVR recording server and does not host a broadcast channel lineup.</p>
+            <p class="text-sm text-muted mt-8">To browse channels or stream live TV, select an HDHomeRun tuner from the device menu in the header.</p>
+          </td>
+        </tr>`;
+    } else {
+      lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No matching channels found.</td></tr>';
+    }
     return;
   }
 
