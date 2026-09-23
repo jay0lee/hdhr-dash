@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.67';
+const APP_VERSION = '2.0.68';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -1176,13 +1176,38 @@ async function discoverLocalMdns() {
 }
 
 async function discoverCloudDevices() {
-  try {
-    const res = await fetch('https://api.hdhomerun.com/discover');
-    if (!res.ok) return [];
-    const list = await res.json();
+  const endpoints = [
+    'https://api.hdhomerun.com/discover',
+    'https://ipv4-api.hdhomerun.com/discover',
+  ];
 
-    if (Array.isArray(list) && list.length > 0) {
-      list.forEach((dev) => {
+  try {
+    const results = await Promise.allSettled(
+      endpoints.map(async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) return [];
+        const list = await res.json();
+        return Array.isArray(list) ? list : [];
+      })
+    );
+
+    const allDevices = [];
+    const seenKeys = new Set();
+
+    for (const r of results) {
+      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+        for (const dev of r.value) {
+          const key = dev.DeviceID || dev.LocalIP;
+          if (key && !seenKeys.has(key)) {
+            seenKeys.add(key);
+            allDevices.push(dev);
+          }
+        }
+      }
+    }
+
+    if (allDevices.length > 0) {
+      allDevices.forEach((dev) => {
         saveDevice({
           ip: dev.LocalIP,
           ModelNumber: dev.ModelNumber,
@@ -1193,7 +1218,7 @@ async function discoverCloudDevices() {
       });
       renderDeviceDropdown();
       renderDiscoveredList();
-      return list;
+      return allDevices;
     }
     return [];
   } catch (e) {
@@ -3983,10 +4008,6 @@ async function gatherDiagnostics() {
   const diagStatusText = document.getElementById('diag-status-text');
 
   const ip = state.currentIp;
-  if (!ip) {
-    alert('No active device IP selected.');
-    return;
-  }
 
   // Update UI to loading state
   if (btnGatherDiag) {
@@ -3997,82 +4018,137 @@ async function gatherDiagnostics() {
     diagStatusBanner.className = 'diag-status-banner';
     diagStatusBanner.classList.remove('hidden', 'success', 'error');
     if (diagStatusIcon) diagStatusIcon.textContent = '⏳';
-    if (diagStatusText) diagStatusText.textContent = `Gathering diagnostic feeds from HDHomeRun at ${ip}...`;
+    if (diagStatusText) {
+      diagStatusText.textContent = ip
+        ? `Gathering diagnostic feeds from HDHomeRun at ${ip} and discovery APIs...`
+        : 'Gathering discovery diagnostic feeds (no device connected)...';
+    }
   }
 
   try {
-    // Check if the device is a RECORD engine (StorageURL or StorageID or state.hasDvr)
-    const isRecordDevice = Boolean(
-      state.hasDvr ||
-      state.dvrStorageUrl ||
-      state.deviceInfo?.StorageURL ||
-      state.deviceInfo?.StorageID
-    );
-
-    const dvrUrl = getDvrRecordedFilesUrl(ip);
-
-    // Base endpoints always expected on any HDHomeRun
-    const endpointPromises = [
-      fetchDiagnosticEndpoint(`http://${ip}/discover.json`),
-      fetchDiagnosticEndpoint(`http://${ip}/status.json`),
-      fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found&tuning`),
-      fetchDiagnosticEndpoint(`http://${ip}/lineup_status.json`),
+    // 1. Fetch discovery endpoints concurrently
+    const discoveryPromises = [
+      fetchDiagnosticEndpoint('https://api.hdhomerun.com/discover', 4000),
+      fetchDiagnosticEndpoint('https://ipv4-api.hdhomerun.com/discover', 4000),
+      fetchDiagnosticEndpoint('http://hdhomerun.local/discover.json', 3000),
     ];
 
-    // Only query recorded_files.json if this device is an HDHomeRun RECORD engine
-    if (isRecordDevice) {
-      endpointPromises.push(fetchDiagnosticEndpoint(dvrUrl));
+    // 2. Fetch device endpoints if an IP is configured
+    let devicePromises = [];
+    let isRecordDevice = false;
+    let dvrUrl = null;
+
+    if (ip) {
+      isRecordDevice = Boolean(
+        state.hasDvr ||
+        state.dvrStorageUrl ||
+        state.deviceInfo?.StorageURL ||
+        state.deviceInfo?.StorageID
+      );
+      dvrUrl = getDvrRecordedFilesUrl(ip);
+
+      devicePromises = [
+        fetchDiagnosticEndpoint(`http://${ip}/discover.json`),
+        fetchDiagnosticEndpoint(`http://${ip}/status.json`),
+        fetchDiagnosticEndpoint(`http://${ip}/lineup.json?show=found&tuning`),
+        fetchDiagnosticEndpoint(`http://${ip}/lineup_status.json`),
+      ];
+
+      if (isRecordDevice) {
+        devicePromises.push(fetchDiagnosticEndpoint(dvrUrl));
+      }
     }
 
-    const results = await Promise.all(endpointPromises);
-    const discoverRes = results[0];
-    const statusRes = results[1];
-    const lineupRes = results[2];
-    const lineupStatusRes = results[3];
-    const recordedRes = isRecordDevice ? results[4] : null;
+    // Run discovery and device queries concurrently
+    const [discoveryResults, deviceResults] = await Promise.all([
+      Promise.all(discoveryPromises),
+      Promise.all(devicePromises),
+    ]);
+
+    const cloudRes = discoveryResults[0];
+    const ipv4CloudRes = discoveryResults[1];
+    const mdnsRes = discoveryResults[2];
+
+    const discoveryObj = {
+      cloud_api: cloudRes.available ? cloudRes.data : { error: cloudRes.error, status: cloudRes.status },
+      ipv4_cloud_api: ipv4CloudRes.available ? ipv4CloudRes.data : { error: ipv4CloudRes.error, status: ipv4CloudRes.status },
+      local_mdns: mdnsRes.available ? mdnsRes.data : { error: mdnsRes.error, status: mdnsRes.status },
+    };
+
+    let deviceObj = null;
+    let discoverRes = null;
+    let statusRes = null;
+    let lineupRes = null;
+    let lineupStatusRes = null;
+    let recordedRes = null;
+
+    if (ip && deviceResults.length >= 4) {
+      discoverRes = deviceResults[0];
+      statusRes = deviceResults[1];
+      lineupRes = deviceResults[2];
+      lineupStatusRes = deviceResults[3];
+      recordedRes = isRecordDevice ? deviceResults[4] : null;
+
+      deviceObj = {
+        discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
+        status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
+        lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
+        lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
+      };
+
+      if (isRecordDevice && recordedRes) {
+        deviceObj.recorded_files = recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status };
+      }
+    }
 
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
     // Build raw diagnostics bundle
-    const deviceObj = {
-      discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
-      status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
-      lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
-      lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
-    };
-
-    if (isRecordDevice && recordedRes) {
-      deviceObj.recorded_files = recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status };
-    }
-
     const rawBundle = {
       dashboard: {
         app_version: `v${APP_VERSION}`,
         generated_at: new Date().toISOString(),
         user_agent: navigator.userAgent,
         pwa_mode: isStandalone ? 'standalone' : 'browser_tab',
-        active_device_ip: ip,
+        protocol: window.location.protocol,
+        host: window.location.host,
+        online: navigator.onLine,
+        active_device_ip: ip || null,
         active_tab: state.activeTab,
+        saved_devices: (state.devices || []).map((d) => ({
+          ip: d.ip || d.LocalIP,
+          ModelNumber: d.ModelNumber,
+          DeviceID: d.DeviceID,
+          StorageID: d.StorageID,
+          source: d.source,
+        })),
       },
+      discovery: discoveryObj,
       device: deviceObj,
-      tuner_history: state.tunerHistory && Object.keys(state.tunerHistory).length > 0 ? state.tunerHistory : null,
+      tuner_history: ip && state.tunerHistory && Object.keys(state.tunerHistory).length > 0 ? state.tunerHistory : null,
     };
 
     state.lastDiagnostics = rawBundle;
 
-    // Count available feeds vs total expected (4 for standard tuners, 5 for RECORD engines)
-    const allFeeds = [discoverRes, statusRes, lineupRes, lineupStatusRes];
-    if (isRecordDevice && recordedRes) {
-      allFeeds.push(recordedRes);
+    // Count feeds
+    const availableDiscCount = discoveryResults.filter((f) => f.available).length;
+    const totalDiscCount = discoveryResults.length;
+
+    let availableDevCount = 0;
+    let totalDevCount = 0;
+    if (deviceResults.length > 0) {
+      availableDevCount = deviceResults.filter((f) => f.available).length;
+      totalDevCount = deviceResults.length;
     }
-    const availableCount = allFeeds.filter((f) => f.available).length;
-    const totalExpected = allFeeds.length;
 
     renderDiagnosticsOutput();
 
     // Check tuner activity and update warning
-    const anyActive = isAnyTunerActive(statusRes.available ? statusRes.data : state.tuners);
-    updateDiagIdleWarning(statusRes.available ? statusRes.data : state.tuners);
+    if (ip && statusRes) {
+      updateDiagIdleWarning(statusRes.available ? statusRes.data : state.tuners);
+    } else {
+      updateDiagIdleWarning([]);
+    }
 
     // Show copy, download & GitHub issue buttons
     if (btnCopyDiag) btnCopyDiag.classList.remove('hidden');
@@ -4082,13 +4158,18 @@ async function gatherDiagnostics() {
 
     if (diagStatusBanner) {
       diagStatusBanner.classList.add('success');
-      if (diagStatusIcon) diagStatusIcon.textContent = anyActive ? '✅' : '⚠️';
+      const anyActive = ip && statusRes ? isAnyTunerActive(statusRes.available ? statusRes.data : state.tuners) : false;
+      if (diagStatusIcon) diagStatusIcon.textContent = (!ip || anyActive) ? '✅' : '⚠️';
       if (diagStatusText) {
-        let msg = `Successfully gathered ${availableCount} of ${totalExpected} diagnostic feeds from ${ip}.`;
-        if (!anyActive) {
-          msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
+        if (ip) {
+          let msg = `Successfully gathered ${availableDevCount} of ${totalDevCount} device feeds and ${availableDiscCount} of ${totalDiscCount} discovery feeds from ${ip}.`;
+          if (!anyActive) {
+            msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
+          }
+          diagStatusText.textContent = msg;
+        } else {
+          diagStatusText.textContent = `Successfully gathered ${availableDiscCount} of ${totalDiscCount} discovery feeds (no device connected).`;
         }
-        diagStatusText.textContent = msg;
       }
     }
   } catch (err) {
@@ -4109,7 +4190,16 @@ async function gatherDiagnostics() {
 function anonymizeIp(str) {
   if (!str || typeof str !== 'string') return str;
   // Replace IPv4 last octet with NN: e.g. 192.168.1.100 -> 192.168.1.NN
-  return str.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b/g, '$1.NN');
+  let s = str.replace(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}\b/g, '$1.NN');
+  // Anonymize IPv6 host suffix if present: e.g. 2600:1700:xxxx:...
+  s = s.replace(/\b([0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}\b/g, (match) => {
+    const parts = match.split(':');
+    if (parts.length > 3) {
+      return parts.slice(0, 3).join(':') + ':...:NN';
+    }
+    return match;
+  });
+  return s;
 }
 
 function processDiagnostics(rawBundle, redact) {
@@ -4118,7 +4208,7 @@ function processDiagnostics(rawBundle, redact) {
   if (redact) {
     const redactValue = (val) => {
       if (typeof val === 'string') {
-        // Anonymize any IPv4 addresses (including within URLs like http://192.168.1.100/lineup.json)
+        // Anonymize any IPv4/IPv6 addresses (including within URLs like http://192.168.1.100/lineup.json)
         let s = anonymizeIp(val);
 
         // Redact usernames in OS file paths (e.g. /Users/username/ or C:\Users\username\)
@@ -4157,7 +4247,16 @@ function processDiagnostics(rawBundle, redact) {
         } else if (lowerKey === 'friendlyname') {
           // Redact user-customized device names that might contain personal names
           obj[key] = 'HDHomeRun';
-        } else if (lowerKey === 'targetip' || lowerKey === 'ip' || lowerKey === 'active_device_ip') {
+        } else if (
+          lowerKey === 'targetip' ||
+          lowerKey === 'ip' ||
+          lowerKey === 'localip' ||
+          lowerKey === 'publicip' ||
+          lowerKey === 'clientip' ||
+          lowerKey === 'remoteip' ||
+          lowerKey === 'wanip' ||
+          lowerKey === 'active_device_ip'
+        ) {
           // Anonymize IP address (e.g. 192.168.1.NN)
           if (typeof obj[key] === 'string') {
             obj[key] = anonymizeIp(obj[key]);
@@ -4189,19 +4288,31 @@ function renderDiagnosticsOutput() {
   const bytes = new Blob([jsonStr]).size;
   const kbSize = (bytes / 1024).toFixed(1);
 
-  const expectedKeys = ['discover', 'status', 'lineup', 'lineup_status'];
-  if (processed.device?.recorded_files !== undefined) {
-    expectedKeys.push('recorded_files');
-  }
-
-  let availableFeeds = 0;
-  expectedKeys.forEach((k) => {
-    if (processed.device?.[k] && !processed.device[k].error && processed.device[k].available !== false) {
-      availableFeeds++;
+  // Discovery feeds count
+  const discKeys = ['cloud_api', 'ipv4_cloud_api', 'local_mdns'];
+  let availableDisc = 0;
+  discKeys.forEach((k) => {
+    if (processed.discovery?.[k] && !processed.discovery[k].error && processed.discovery[k].available !== false) {
+      availableDisc++;
     }
   });
-  const totalFeeds = expectedKeys.length;
-  const feedSummary = `${availableFeeds} of ${totalFeeds} feeds`;
+
+  let feedSummary = '';
+  if (processed.device) {
+    const devKeys = ['discover', 'status', 'lineup', 'lineup_status'];
+    if (processed.device?.recorded_files !== undefined) {
+      devKeys.push('recorded_files');
+    }
+    let availableDev = 0;
+    devKeys.forEach((k) => {
+      if (processed.device?.[k] && !processed.device[k].error && processed.device[k].available !== false) {
+        availableDev++;
+      }
+    });
+    feedSummary = `${availableDev}/${devKeys.length} device feeds • ${availableDisc}/${discKeys.length} discovery feeds`;
+  } else {
+    feedSummary = `${availableDisc}/${discKeys.length} discovery feeds (No device connected)`;
+  }
 
   if (diagOutputMeta) {
     diagOutputMeta.textContent = `${kbSize} KB • ${feedSummary} • ${shouldRedact ? 'Anonymized & Redacted' : 'Full (Raw)'}`;
@@ -4282,13 +4393,15 @@ function openGitHubIssue() {
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
   // Issue title is clean: no serial number, no IP address
-  const title = `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'}`;
+  const title = ip
+    ? `[Issue]: Problem with ${dev.ModelNumber || 'HDHomeRun'}`
+    : `[Issue]: Device Discovery Issue (${navigator.userAgent.includes('Android') ? 'Android' : 'Web'})`;
 
-  const anonymizedIp = anonymizeIp(ip);
+  const anonymizedIp = ip ? anonymizeIp(ip) : 'None configured';
   let baseBody = `### 🚨 Problem Description (Required)\n`;
   baseBody += `> ✍️ **PLEASE DESCRIBE YOUR ISSUE HERE BEFORE SUBMITTING:**\n`;
-  baseBody += `> - *What is happening? (e.g. video freezing, pixelation, channels failing to tune, tuner error)*\n`;
-  baseBody += `> - *When did it start? Does it happen on specific channels or all channels?*\n\n`;
+  baseBody += `> - *What is happening? (e.g. video freezing, pixelation, channels failing to tune, device discovery failing)*\n`;
+  baseBody += `> - *When did it start? Does it happen on specific devices/browsers or all?*\n\n`;
   baseBody += `[Type your problem description here]\n\n`;
   baseBody += `---\n\n`;
 
@@ -4318,15 +4431,20 @@ function openGitHubIssue() {
 
   baseBody += `### Environment & Diagnostic Summary\n`;
   baseBody += `- **HDHR Dash Version:** v${APP_VERSION}\n`;
-  baseBody += `- **Device Model:** ${dev.ModelNumber || 'HDHomeRun'}\n`;
+  baseBody += `- **Device Model:** ${ip ? (dev.ModelNumber || 'HDHomeRun') : 'None (Discovery issue)'}\n`;
   baseBody += `- **Device ID / Serial:** \`[REDACTED]\`\n`;
   baseBody += `- **Firmware Version:** \`${dev.FirmwareVersion || 'Unknown'}\`\n`;
   baseBody += `- **Device IP:** \`${anonymizedIp}\`\n`;
+  baseBody += `- **Protocol / Host:** \`${window.location.protocol}//${window.location.host}\`\n`;
   baseBody += `- **App Mode:** ${isStandalone ? 'Installed PWA' : 'Browser Tab'}\n`;
   baseBody += `- **User Agent:** \`${navigator.userAgent}\`\n`;
-  baseBody += `- **Total Tuners:** ${totalTunerCount}\n`;
-  baseBody += `- **Active Tuners:** ${activeTuners.length} (${activeTuners.length === 0 ? 'All tuners idle' : `${activeTuners.length} of ${totalTunerCount} in use`})\n`;
-  baseBody += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
+  if (ip) {
+    baseBody += `- **Total Tuners:** ${totalTunerCount}\n`;
+    baseBody += `- **Active Tuners:** ${activeTuners.length} (${activeTuners.length === 0 ? 'All tuners idle' : `${activeTuners.length} of ${totalTunerCount} in use`})\n`;
+    baseBody += `- **Lineup Channels:** ${state.lineup ? state.lineup.length : 'Unknown'}\n\n`;
+  } else {
+    baseBody += `- **Saved Devices in Storage:** ${(state.devices || []).length}\n\n`;
+  }
 
   if (physicalTuners.length > 0) {
     baseBody += `### Current Tuner Status\n`;
