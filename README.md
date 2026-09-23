@@ -55,7 +55,7 @@ Browse your complete scanned channel lineup with broadcast format badges, recept
 * **Comprehensive Badges:**
   * **Broadcast Band:** `UHF` vs `VHF` pills to identify which frequencies your antenna needs to receive.
   * **Broadcast Standard:** `ATSC1` (standard digital broadcast) vs `ATSC3` (NextGen TV 4K/HEVC).
-  * **DRM Protection:** Highlights encrypted ATSC 3.0 channels with `🔒 DRM` (A3SA encryption).
+  * **DRM Protection:** Highlights encrypted ATSC 3.0 channels with `🔒 DRM`.
   * **Favorites & Format:** `⭐ Fav` favorite status, `HD` / `4K` / `SD` resolution tags.
 * **Physical RF Sub-labels:** Virtual channel numbers (e.g. `10.1`, `106.1`) are paired directly with their physical RF channel number (`RF 28`, `RF 33`) so you always know the true transmission frequency.
 * **Instant Search & Advanced Filters:** Search channels instantly by name, callsign, or channel number. Use the **⚡ Filters** dropdown to narrow down by *Favorites*, *Allowed*, *Hidden*, *ATSC 3.0*, *UHF*, *VHF*, *HD*, or *DRM*.
@@ -127,10 +127,8 @@ HDHR Dash displays both numbers and a **UHF** / **VHF** pill for every channel. 
 
 ### 2. ATSC 1.0 vs. ATSC 3.0 (NextGen TV) & DRM
 - **ATSC 1.0:** Standard digital television broadcast. HDHR Dash allows copying stream URLs, opening in VLC/IINA, and downloading recordings without restrictions.
-- **ATSC 3.0 (NextGen TV):** Modern broadcast standard supporting 4K HDR, HEVC video, and AC-4 audio.
-- **`🔒 DRM` (A3SA Encryption):** Certain broadcasters encrypt their ATSC 3.0 broadcasts with A3SA DRM. 
-  > [!IMPORTANT]
-  > DRM-encrypted channels cannot be decoded in third-party video players (VLC, web browsers, Plex). To watch channels marked with `🔒 DRM`, you must use the official SiliconDust HDHomeRun app on a supported platform (Android TV, Apple TV, Fire TV, Windows). Unencrypted ATSC 3.0 channels and all ATSC 1.0 channels stream freely anywhere.
+- **ATSC 3.0 (NextGen TV):** Modern broadcast standard supporting 4K HDR, HEVC video, and AC-4 audio. Unencrypted ATSC 3.0 channels stream freely like ATSC 1.0.
+- **`🔒 DRM`:** Broadcasters may encrypt their ATSC 3.0 broadcasts with DRM. For the latest status, discussion, and information regarding ATSC 3.0 DRM support and playback across platforms, refer to the [SiliconDust ATSC 3.0 DRM Forum](https://forum.silicondust.com/forum/viewforum.php?f=133).
 
 ---
 

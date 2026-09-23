@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.66';
+const APP_VERSION = '2.0.67';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -2960,7 +2960,7 @@ function renderLineup() {
     let actionsHtml = '';
     if (isDrm) {
       actionsHtml = `
-        <button class="btn btn-sm btn-drm-locked" title="ATSC 3.0 DRM Encrypted: Playable only in official HDHomeRun app with active license, not in VLC or other players">
+        <button class="btn btn-sm btn-drm-locked" title="ATSC 3.0 DRM Encrypted">
           🔒 DRM
         </button>
         <button class="btn btn-sm btn-secondary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL">
