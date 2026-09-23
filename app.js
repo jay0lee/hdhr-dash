@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.69';
+const APP_VERSION = '2.0.70';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -1175,58 +1175,6 @@ async function discoverLocalMdns() {
   return null;
 }
 
-async function discoverCloudDevices() {
-  const endpoints = [
-    'https://api.hdhomerun.com/discover',
-    'https://ipv4-api.hdhomerun.com/discover',
-  ];
-
-  try {
-    const results = await Promise.allSettled(
-      endpoints.map(async (url) => {
-        const res = await fetch(url);
-        if (!res.ok) return [];
-        const list = await res.json();
-        return Array.isArray(list) ? list : [];
-      })
-    );
-
-    const allDevices = [];
-    const seenKeys = new Set();
-
-    for (const r of results) {
-      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-        for (const dev of r.value) {
-          const key = dev.DeviceID || dev.LocalIP;
-          if (key && !seenKeys.has(key)) {
-            seenKeys.add(key);
-            allDevices.push(dev);
-          }
-        }
-      }
-    }
-
-    if (allDevices.length > 0) {
-      allDevices.forEach((dev) => {
-        saveDevice({
-          ip: dev.LocalIP,
-          ModelNumber: dev.ModelNumber,
-          DeviceID: dev.DeviceID,
-          StorageURL: dev.StorageURL,
-          source: 'auto',
-        });
-      });
-      renderDeviceDropdown();
-      renderDiscoveredList();
-      return allDevices;
-    }
-    return [];
-  } catch (e) {
-    console.log('Cloud discovery skipped or offline:', e.message);
-    return [];
-  }
-}
-
 function goToManualIpEntry() {
   connectionDot.className = 'status-dot disconnected';
   renderDeviceDropdown();
@@ -1253,9 +1201,8 @@ async function initDeviceConnection() {
       if (state.hasDvr) {
         fetchRecordings(state.activeTab !== 'recordings').catch(() => {});
       }
-      // Background check for other devices
+      // Background check for other devices via local mDNS
       discoverLocalMdns().catch(() => {});
-      discoverCloudDevices().catch(() => {});
       return;
     }
   }
@@ -1277,28 +1224,7 @@ async function initDeviceConnection() {
     }
   }
 
-  // 3. Try cloud discovery (api.hdhomerun.com)
-  const discovered = await discoverCloudDevices();
-  if (discovered && discovered.length > 0) {
-    const primaryDev = discovered[0];
-    const ip = primaryDev.LocalIP || primaryDev.ip;
-    if (ip) {
-      state.currentIp = ip;
-      localStorage.setItem(STORAGE_ACTIVE_IP, ip);
-      renderDeviceDropdown();
-      connected = await loadDeviceDetails();
-      if (connected) {
-        const noticeEl = document.getElementById('no-device-notice');
-        if (noticeEl) noticeEl.classList.add('hidden');
-        if (state.hasDvr) {
-          fetchRecordings(state.activeTab !== 'recordings').catch(() => {});
-        }
-        return;
-      }
-    }
-  }
-
-  // 4. Neither worked: go to manual IP entry
+  // 3. Fall back to manual IP entry
   goToManualIpEntry();
 }
 
@@ -1343,8 +1269,8 @@ function setupDeviceManagement() {
   btnRediscover.addEventListener('click', async () => {
     btnRediscover.disabled = true;
     btnRediscover.textContent = 'Discovering...';
-    await Promise.allSettled([discoverLocalMdns(), discoverCloudDevices()]);
-    btnRediscover.textContent = '🔍 Run Device Discovery';
+    await discoverLocalMdns();
+    btnRediscover.textContent = '🔍 Run mDNS Discovery';
     btnRediscover.disabled = false;
   });
 
@@ -4026,12 +3952,8 @@ async function gatherDiagnostics() {
   }
 
   try {
-    // 1. Fetch discovery endpoints concurrently
-    const discoveryPromises = [
-      fetchDiagnosticEndpoint('https://api.hdhomerun.com/discover', 4000),
-      fetchDiagnosticEndpoint('https://ipv4-api.hdhomerun.com/discover', 4000),
-      fetchDiagnosticEndpoint('http://hdhomerun.local/discover.json', 3000),
-    ];
+    // 1. Fetch local mDNS discovery endpoint
+    const mdnsPromise = fetchDiagnosticEndpoint('http://hdhomerun.local/discover.json', 3000);
 
     // 2. Fetch device endpoints if an IP is configured
     let devicePromises = [];
@@ -4059,24 +3981,18 @@ async function gatherDiagnostics() {
       }
     }
 
-    // Run discovery and device queries concurrently
-    const [discoveryResults, deviceResults] = await Promise.all([
-      Promise.all(discoveryPromises),
+    // Run mDNS and device queries concurrently
+    const [mdnsRes, deviceResults] = await Promise.all([
+      mdnsPromise,
       Promise.all(devicePromises),
     ]);
 
-    const cloudRes = discoveryResults[0];
-    const ipv4CloudRes = discoveryResults[1];
-    const mdnsRes = discoveryResults[2];
-
     const discoveryObj = {
-      cloud_api: cloudRes.available ? cloudRes.data : { error: cloudRes.error, status: cloudRes.status },
-      ipv4_cloud_api: ipv4CloudRes.available ? ipv4CloudRes.data : { error: ipv4CloudRes.error, status: ipv4CloudRes.status },
       local_mdns: mdnsRes.available ? mdnsRes.data : { error: mdnsRes.error, status: mdnsRes.status },
-      ...(window.location.protocol === 'https:' && !cloudRes.available && !ipv4CloudRes.available && !mdnsRes.available
+      ...(window.location.protocol === 'https:' && !mdnsRes.available
         ? {
             notes:
-              'When hosted over HTTPS, browser Mixed Content security blocks SD cloud redirects to http://ipv4-api.hdhomerun.com, and Android Chrome lacks .local mDNS resolution. Direct IP connection to the device is supported.',
+              'When hosted over HTTPS, browser Mixed Content security blocks http://hdhomerun.local requests. Direct IP connection to the device is supported.',
           }
         : {}),
     };
@@ -4137,8 +4053,7 @@ async function gatherDiagnostics() {
     state.lastDiagnostics = rawBundle;
 
     // Count feeds
-    const availableDiscCount = discoveryResults.filter((f) => f.available).length;
-    const totalDiscCount = discoveryResults.length;
+    const availableDiscCount = mdnsRes.available ? 1 : 0;
 
     let availableDevCount = 0;
     let totalDevCount = 0;
@@ -4168,15 +4083,15 @@ async function gatherDiagnostics() {
       if (diagStatusIcon) diagStatusIcon.textContent = (!ip || anyActive) ? '✅' : '⚠️';
       if (diagStatusText) {
         if (ip) {
-          let msg = `Successfully gathered ${availableDevCount} of ${totalDevCount} device feeds and ${availableDiscCount} of ${totalDiscCount} discovery feeds from ${ip}.`;
+          let msg = `Successfully gathered ${availableDevCount} of ${totalDevCount} device feeds and ${availableDiscCount} of 1 mDNS discovery feed from ${ip}.`;
           if (!anyActive) {
             msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
           }
           diagStatusText.textContent = msg;
         } else if (availableDiscCount === 0 && window.location.protocol === 'https:') {
-          diagStatusText.textContent = 'Discovery feeds blocked by browser HTTPS/CORS restrictions (common on Android). Please add your device IP manually above.';
+          diagStatusText.textContent = 'mDNS discovery feed blocked by browser HTTPS/Mixed Content restrictions. Please add your device IP manually above.';
         } else {
-          diagStatusText.textContent = `Successfully gathered ${availableDiscCount} of ${totalDiscCount} discovery feeds (no device connected).`;
+          diagStatusText.textContent = `Successfully gathered ${availableDiscCount} of 1 mDNS discovery feed (no device connected).`;
         }
       }
     }
@@ -4296,14 +4211,8 @@ function renderDiagnosticsOutput() {
   const bytes = new Blob([jsonStr]).size;
   const kbSize = (bytes / 1024).toFixed(1);
 
-  // Discovery feeds count
-  const discKeys = ['cloud_api', 'ipv4_cloud_api', 'local_mdns'];
-  let availableDisc = 0;
-  discKeys.forEach((k) => {
-    if (processed.discovery?.[k] && !processed.discovery[k].error && processed.discovery[k].available !== false) {
-      availableDisc++;
-    }
-  });
+  // Discovery feeds count (mDNS)
+  const availableDisc = (processed.discovery?.local_mdns && !processed.discovery.local_mdns.error && processed.discovery.local_mdns.available !== false) ? 1 : 0;
 
   let feedSummary = '';
   if (processed.device) {
@@ -4317,9 +4226,9 @@ function renderDiagnosticsOutput() {
         availableDev++;
       }
     });
-    feedSummary = `${availableDev}/${devKeys.length} device feeds • ${availableDisc}/${discKeys.length} discovery feeds`;
+    feedSummary = `${availableDev}/${devKeys.length} device feeds • ${availableDisc}/1 mDNS feed`;
   } else {
-    feedSummary = `${availableDisc}/${discKeys.length} discovery feeds (No device connected)`;
+    feedSummary = `${availableDisc}/1 mDNS feed (No device connected)`;
   }
 
   if (diagOutputMeta) {

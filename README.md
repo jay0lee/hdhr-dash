@@ -22,7 +22,7 @@ You do not need to install servers, sign up for an account, or configure backgro
 2. **Allow Local Network Access:**  
    When prompted by your browser (e.g. Chrome, Edge, or Brave), click **Allow** to let the dashboard communicate with your HDHomeRun tuner on your local network. *(See [How Local Network Access Works](#-how-local-network-access-works) below).*
 3. **Connect Your Tuner:**  
-   HDHR Dash will automatically detect your HDHomeRun device via mDNS / UDP discovery. If auto-discovery is blocked by your browser or network, go to the **System** tab, enter your tuner's local IP (e.g., `192.168.1.100`) or mDNS hostname (e.g., `hdhr-10a1d769.local`), and click **Add / Switch**.
+   HDHR Dash will automatically detect your HDHomeRun device via local network (mDNS) discovery. If auto-discovery is blocked by your browser or network, go to the **System** tab, enter your tuner's local IP (e.g., `192.168.1.100`) or mDNS hostname (e.g., `hdhr-10a1d769.local`), and click **Add / Switch**.
 4. **(Optional) Install as an App:**  
    Install HDHR Dash to your desktop or home screen for a standalone, full-screen app experience. *(See [Installing as a PWA](#-installing-as-a-progressive-web-app-pwa) below).*
 
