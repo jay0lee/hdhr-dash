@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.63';
+const APP_VERSION = '2.0.64';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -481,7 +481,7 @@ async function refreshActiveTab() {
       await fetchTuners();
       break;
     case 'lineup':
-      if (state.lineup.length === 0) {
+      if (state.lineup.length === 0 || !state.lineup.some((ch) => ch.Frequency)) {
         await fetchLineup();
       } else {
         updateLineupStats();
@@ -615,7 +615,7 @@ async function loadDeviceDetails() {
 
     // Update live HDHR status: active clients, active recordings, and storage (used/free)
     await updateSystemLiveStatus();
-    loadChannelsCount();
+    await loadChannelsCount();
 
     // Check for firmware updates
     checkFirmwareUpdate(data);
@@ -989,27 +989,11 @@ function renderChannelsCount(allowed, total) {
 }
 
 async function loadChannelsCount() {
-  if (state.lineup && state.lineup.length > 0) {
+  if (state.lineup && state.lineup.length > 0 && state.lineup.some((ch) => ch.Frequency)) {
     updateLineupStats();
     return;
   }
-
-  const ip = state.currentIp;
-  try {
-    const res = await fetch(`http://${ip}/lineup.json?show=found`);
-    if (res.ok) {
-      const lineup = await res.json();
-      if (Array.isArray(lineup)) {
-        state.lineup = lineup;
-        updateLineupStats();
-        if (state.activeTab === 'lineup') {
-          renderLineup();
-        }
-      }
-    }
-  } catch (e) {
-    console.warn('Could not load channels count for system view:', e);
-  }
+  await fetchLineup(true);
 }
 
 async function discoverLocalMdns() {
@@ -2437,40 +2421,61 @@ function updateLineupStats() {
   renderChannelsCount(allowedChannels.length, state.lineup.length);
 }
 
-async function fetchLineup() {
+let lineupFetchPromise = null;
+
+async function fetchLineup(isBackground = false) {
   const ip = state.currentIp;
   if (!ip) {
-    lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No HDHomeRun device connected. Please configure a device IP on the <a href="#system" onclick="switchTab(\'system\'); return false;">System</a> tab.</td></tr>';
+    if (!isBackground) {
+      lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">No HDHomeRun device connected. Please configure a device IP on the <a href="#system" onclick="switchTab(\'system\'); return false;">System</a> tab.</td></tr>';
+    }
     return;
   }
-  lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
 
-  try {
-    // Concurrently fetch lineup with tuning info (for frequencies) and status
-    let lineupRes = await fetch(`http://${ip}/lineup.json?show=found&tuning`).catch(() => null);
-    if (!lineupRes || !lineupRes.ok) {
-      lineupRes = await fetch(`http://${ip}/lineup.json?show=found`);
-    }
-
-    const statusRes = await fetch(`http://${ip}/status.json`).catch(() => null);
-
-    if (!lineupRes.ok) throw new Error(`HTTP ${lineupRes.status}`);
-    const lineup = await lineupRes.json();
-    state.lineup = Array.isArray(lineup) ? lineup : [];
-
-    if (statusRes && statusRes.ok) {
-      const statusItems = await statusRes.json();
-      if (Array.isArray(statusItems)) {
-        state.tuners = statusItems;
-      }
-    }
-
-    updateLineupStats();
-    renderLineup();
-  } catch (err) {
-    console.warn('Error fetching lineup:', err);
-    lineupTbody.innerHTML = `<tr><td colspan="5" class="empty-state error">Failed to load lineup from ${ip}.</td></tr>`;
+  if (lineupFetchPromise) {
+    return lineupFetchPromise;
   }
+
+  if (!isBackground && state.lineup.length === 0) {
+    lineupTbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading channels...</td></tr>';
+  }
+
+  lineupFetchPromise = (async () => {
+    try {
+      // Concurrently fetch lineup with tuning info (for frequencies) and status
+      let lineupRes = await fetch(`http://${ip}/lineup.json?show=found&tuning`).catch(() => null);
+      if (!lineupRes || !lineupRes.ok) {
+        lineupRes = await fetch(`http://${ip}/lineup.json?show=found`);
+      }
+
+      const statusRes = await fetch(`http://${ip}/status.json`).catch(() => null);
+
+      if (!lineupRes.ok) throw new Error(`HTTP ${lineupRes.status}`);
+      const lineup = await lineupRes.json();
+      state.lineup = Array.isArray(lineup) ? lineup : [];
+
+      if (statusRes && statusRes.ok) {
+        const statusItems = await statusRes.json();
+        if (Array.isArray(statusItems)) {
+          state.tuners = statusItems;
+        }
+      }
+
+      updateLineupStats();
+      if (state.activeTab === 'lineup' || !isBackground) {
+        renderLineup();
+      }
+    } catch (err) {
+      console.warn('Error fetching lineup:', err);
+      if (!isBackground) {
+        lineupTbody.innerHTML = `<tr><td colspan="5" class="empty-state error">Failed to load lineup from ${ip}.</td></tr>`;
+      }
+    } finally {
+      lineupFetchPromise = null;
+    }
+  })();
+
+  return lineupFetchPromise;
 }
 
 function setupLineupFilters() {
