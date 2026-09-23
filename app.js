@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.68';
+const APP_VERSION = '2.0.69';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4073,6 +4073,12 @@ async function gatherDiagnostics() {
       cloud_api: cloudRes.available ? cloudRes.data : { error: cloudRes.error, status: cloudRes.status },
       ipv4_cloud_api: ipv4CloudRes.available ? ipv4CloudRes.data : { error: ipv4CloudRes.error, status: ipv4CloudRes.status },
       local_mdns: mdnsRes.available ? mdnsRes.data : { error: mdnsRes.error, status: mdnsRes.status },
+      ...(window.location.protocol === 'https:' && !cloudRes.available && !ipv4CloudRes.available && !mdnsRes.available
+        ? {
+            notes:
+              'When hosted over HTTPS, browser Mixed Content security blocks SD cloud redirects to http://ipv4-api.hdhomerun.com, and Android Chrome lacks .local mDNS resolution. Direct IP connection to the device is supported.',
+          }
+        : {}),
     };
 
     let deviceObj = null;
@@ -4167,6 +4173,8 @@ async function gatherDiagnostics() {
             msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
           }
           diagStatusText.textContent = msg;
+        } else if (availableDiscCount === 0 && window.location.protocol === 'https:') {
+          diagStatusText.textContent = 'Discovery feeds blocked by browser HTTPS/CORS restrictions (common on Android). Please add your device IP manually above.';
         } else {
           diagStatusText.textContent = `Successfully gathered ${availableDiscCount} of ${totalDiscCount} discovery feeds (no device connected).`;
         }
