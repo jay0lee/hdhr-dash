@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.70';
+const APP_VERSION = '2.0.71';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -3898,14 +3898,17 @@ function setupDiagnostics() {
 async function fetchDiagnosticEndpoint(url, timeoutMs = 4500) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const startTime = performance.now();
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timeoutId);
+    const elapsedMs = Math.round(performance.now() - startTime);
     if (!res.ok) {
       return {
         available: false,
         status: res.status,
         statusText: res.statusText,
+        elapsed_ms: elapsedMs,
         error: `HTTP ${res.status}: ${res.statusText}`,
       };
     }
@@ -3913,13 +3916,17 @@ async function fetchDiagnosticEndpoint(url, timeoutMs = 4500) {
     return {
       available: true,
       status: res.status,
+      elapsed_ms: elapsedMs,
       data: data,
     };
   } catch (err) {
     clearTimeout(timeoutId);
+    const elapsedMs = Math.round(performance.now() - startTime);
     return {
       available: false,
       status: 'error',
+      elapsed_ms: elapsedMs,
+      error_name: err.name || 'Error',
       error: err.name === 'AbortError' ? `Request timed out after ${timeoutMs / 1000}s` : err.message,
     };
   }
@@ -3987,16 +3994,6 @@ async function gatherDiagnostics() {
       Promise.all(devicePromises),
     ]);
 
-    const discoveryObj = {
-      local_mdns: mdnsRes.available ? mdnsRes.data : { error: mdnsRes.error, status: mdnsRes.status },
-      ...(window.location.protocol === 'https:' && !mdnsRes.available
-        ? {
-            notes:
-              'When hosted over HTTPS, browser Mixed Content security blocks http://hdhomerun.local requests. Direct IP connection to the device is supported.',
-          }
-        : {}),
-    };
-
     let deviceObj = null;
     let discoverRes = null;
     let statusRes = null;
@@ -4012,16 +4009,35 @@ async function gatherDiagnostics() {
       recordedRes = isRecordDevice ? deviceResults[4] : null;
 
       deviceObj = {
-        discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, status: discoverRes.status },
-        status: statusRes.available ? statusRes.data : { error: statusRes.error, status: statusRes.status },
-        lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, status: lineupStatusRes.status },
-        lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, status: lineupRes.status },
+        discover: discoverRes.available ? discoverRes.data : { error: discoverRes.error, error_name: discoverRes.error_name, elapsed_ms: discoverRes.elapsed_ms, status: discoverRes.status },
+        status: statusRes.available ? statusRes.data : { error: statusRes.error, error_name: statusRes.error_name, elapsed_ms: statusRes.elapsed_ms, status: statusRes.status },
+        lineup_status: lineupStatusRes.available ? lineupStatusRes.data : { error: lineupStatusRes.error, error_name: lineupStatusRes.error_name, elapsed_ms: lineupStatusRes.elapsed_ms, status: lineupStatusRes.status },
+        lineup: lineupRes.available ? lineupRes.data : { error: lineupRes.error, error_name: lineupRes.error_name, elapsed_ms: lineupRes.elapsed_ms, status: lineupRes.status },
       };
 
       if (isRecordDevice && recordedRes) {
-        deviceObj.recorded_files = recordedRes.available ? recordedRes.data : { error: recordedRes.error, status: recordedRes.status };
+        deviceObj.recorded_files = recordedRes.available ? recordedRes.data : { error: recordedRes.error, error_name: recordedRes.error_name, elapsed_ms: recordedRes.elapsed_ms, status: recordedRes.status };
       }
     }
+
+    const discoveryObj = {
+      local_mdns: mdnsRes.available
+        ? mdnsRes.data
+        : {
+            error: mdnsRes.error,
+            error_name: mdnsRes.error_name,
+            elapsed_ms: mdnsRes.elapsed_ms,
+            status: mdnsRes.status,
+          },
+      telemetry: {
+        local_mdns_elapsed_ms: mdnsRes.elapsed_ms,
+        local_mdns_status: mdnsRes.available ? 'success' : 'failed',
+        ...(ip && discoverRes ? {
+          direct_ip_discover_elapsed_ms: discoverRes.elapsed_ms,
+          direct_ip_discover_status: discoverRes.available ? 'success' : 'failed',
+        } : {}),
+      },
+    };
 
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
@@ -4034,7 +4050,14 @@ async function gatherDiagnostics() {
         pwa_mode: isStandalone ? 'standalone' : 'browser_tab',
         protocol: window.location.protocol,
         host: window.location.host,
+        is_secure_context: typeof window.isSecureContext === 'boolean' ? window.isSecureContext : null,
         online: navigator.onLine,
+        connection: navigator.connection ? {
+          effective_type: navigator.connection.effectiveType || null,
+          rtt: navigator.connection.rtt ?? null,
+          downlink: navigator.connection.downlink ?? null,
+          save_data: navigator.connection.saveData ?? null,
+        } : null,
         active_device_ip: ip || null,
         active_tab: state.activeTab,
         saved_devices: (state.devices || []).map((d) => ({
@@ -4088,8 +4111,8 @@ async function gatherDiagnostics() {
             msg += ` Note: All tuners are currently idle (stream a channel in the HDHomeRun app to test signal metrics).`;
           }
           diagStatusText.textContent = msg;
-        } else if (availableDiscCount === 0 && window.location.protocol === 'https:') {
-          diagStatusText.textContent = 'mDNS discovery feed blocked by browser HTTPS/Mixed Content restrictions. Please add your device IP manually above.';
+        } else if (availableDiscCount === 0) {
+          diagStatusText.textContent = 'mDNS discovery feed (http://hdhomerun.local) did not respond. Please add your device IP manually above.';
         } else {
           diagStatusText.textContent = `Successfully gathered ${availableDiscCount} of 1 mDNS discovery feed (no device connected).`;
         }
