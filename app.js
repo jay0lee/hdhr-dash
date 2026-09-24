@@ -7,7 +7,11 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.73';
+const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
+const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
+const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
+const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
+const APP_VERSION = '2.0.74';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -276,23 +280,137 @@ document.addEventListener('DOMContentLoaded', async () => {
       setTimeout(() => (btnCheckFirmware.textContent = '🔄 Check'), 600);
     });
   }
+
+  // Setup Station Database Update button
+  const btnUpdateStations = document.getElementById('btn-update-stations');
+  if (btnUpdateStations) {
+    btnUpdateStations.addEventListener('click', () => {
+      updateStationDatabaseFromWebsite(true);
+    });
+  }
 });
 
 async function loadStationDatabase() {
-  try {
-    const res = await fetch('./stations.json');
-    if (res.ok) {
-      state.stationMap = await res.json();
-      if (state.lineup && state.lineup.length > 0) {
-        renderLineup();
-      }
-      if (state.tuners && state.tuners.length > 0) {
-        renderTuners(state.tuners);
+  let loadedFromCache = false;
+
+  // Check if we need to refresh baseline due to an app version upgrade
+  const cachedAppVer = localStorage.getItem(STORAGE_STATIONS_APP_VERSION);
+  const isNewAppVersion = cachedAppVer !== APP_VERSION;
+
+  // 1. First, instantly load from localStorage if available (zero-latency startup)
+  if (!isNewAppVersion) {
+    const cachedJson = localStorage.getItem(STORAGE_STATIONS_CACHE);
+    if (cachedJson) {
+      try {
+        const cached = JSON.parse(cachedJson);
+        if (cached && typeof cached === 'object' && Object.keys(cached).length > 0) {
+          state.stationMap = cached;
+          loadedFromCache = true;
+          updateStationSyncStatus();
+          if (state.lineup && state.lineup.length > 0) renderLineup();
+          if (state.tuners && state.tuners.length > 0) renderTuners(state.tuners);
+        }
+      } catch (e) {
+        console.warn('Error parsing cached station database:', e);
       }
     }
-  } catch (err) {
-    console.warn('Could not load station database:', err);
   }
+
+  // 2. If no valid cache exists or app version upgraded, load bundled stations.json immediately
+  if (!loadedFromCache) {
+    try {
+      const res = await fetch('./stations.json');
+      if (res.ok) {
+        const data = await res.json();
+        state.stationMap = data;
+        localStorage.setItem(STORAGE_STATIONS_CACHE, JSON.stringify(data));
+        localStorage.setItem(STORAGE_STATIONS_LAST_SYNC, Date.now().toString());
+        localStorage.setItem(STORAGE_STATIONS_APP_VERSION, APP_VERSION);
+        updateStationSyncStatus();
+        if (state.lineup && state.lineup.length > 0) renderLineup();
+        if (state.tuners && state.tuners.length > 0) renderTuners(state.tuners);
+        return;
+      }
+    } catch (err) {
+      console.warn('Could not load bundled station database:', err);
+    }
+  }
+
+  // 3. Check if weekly background refresh is due
+  const lastSync = parseInt(localStorage.getItem(STORAGE_STATIONS_LAST_SYNC) || '0', 10);
+  const isDue = Date.now() - lastSync >= STATIONS_SYNC_INTERVAL_MS;
+
+  if (isDue && navigator.onLine) {
+    // Schedule asynchronous background update without blocking page load
+    setTimeout(() => {
+      updateStationDatabaseFromWebsite();
+    }, 2500);
+  }
+}
+
+async function updateStationDatabaseFromWebsite(force = false) {
+  const btnUpdateStations = document.getElementById('btn-update-stations');
+  if (btnUpdateStations && force) {
+    btnUpdateStations.disabled = true;
+    btnUpdateStations.textContent = '⏳';
+  }
+
+  try {
+    const res = await fetch(`./stations.json?_t=${Date.now()}`, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const freshData = await res.json();
+
+    if (freshData && typeof freshData === 'object' && Object.keys(freshData).length > 0) {
+      const newCount = Object.keys(freshData).length;
+
+      state.stationMap = freshData;
+      localStorage.setItem(STORAGE_STATIONS_CACHE, JSON.stringify(freshData));
+      localStorage.setItem(STORAGE_STATIONS_LAST_SYNC, Date.now().toString());
+      localStorage.setItem(STORAGE_STATIONS_APP_VERSION, APP_VERSION);
+
+      updateStationSyncStatus();
+
+      if (state.lineup && state.lineup.length > 0) renderLineup();
+      if (state.tuners && state.tuners.length > 0) renderTuners(state.tuners);
+
+      if (force) {
+        showToast(`Station database updated (${newCount.toLocaleString()} stations)`);
+      }
+      return true;
+    }
+  } catch (err) {
+    console.warn('Could not update station database from website:', err);
+    if (force) {
+      showAlert(`Failed to update station database: ${err.message}`, 'error');
+    }
+    return false;
+  } finally {
+    if (btnUpdateStations) {
+      btnUpdateStations.disabled = false;
+      btnUpdateStations.textContent = '🔄 Update';
+    }
+  }
+}
+
+function updateStationSyncStatus() {
+  const infoStationsStatus = document.getElementById('info-stations-status');
+  if (!infoStationsStatus) return;
+
+  const count = state.stationMap ? Object.keys(state.stationMap).length : 0;
+  const lastSync = parseInt(localStorage.getItem(STORAGE_STATIONS_LAST_SYNC) || '0', 10);
+
+  if (!lastSync) {
+    infoStationsStatus.textContent = `${count.toLocaleString()} stations`;
+    return;
+  }
+
+  const diffMs = Date.now() - lastSync;
+  const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  let timeStr = 'today';
+  if (diffDays === 1) timeStr = 'yesterday';
+  else if (diffDays > 1) timeStr = `${diffDays}d ago`;
+
+  infoStationsStatus.textContent = `${count.toLocaleString()} stations • Synced ${timeStr}`;
 }
 
 function getStationInfo(guideName) {
@@ -3898,6 +4016,8 @@ function renderAppInfo() {
       ? '<span class="badge badge-hd">Installed PWA</span>'
       : '<span class="text-muted">Browser Tab</span>';
   }
+
+  updateStationSyncStatus();
 }
 
 /* ==========================================================================

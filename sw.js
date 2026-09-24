@@ -1,9 +1,9 @@
-const CACHE_NAME = 'hdhr-dash-v76';
+const CACHE_NAME = 'hdhr-dash-v77';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.0.73',
-  './app.js?v=2.0.73',
+  './style.css?v=2.0.74',
+  './app.js?v=2.0.74',
   './stations.json',
   './assets/logos/generic-tv.svg',
   './assets/logos/abc.svg',
@@ -54,8 +54,7 @@ self.addEventListener('fetch', (event) => {
   // Never intercept HDHomeRun LAN API calls, external APIs, or non-origin requests
   if (
     !url.protocol.startsWith('http') ||
-    url.hostname !== self.location.hostname ||
-    url.pathname.endsWith('.json')
+    url.hostname !== self.location.hostname
   ) {
     return;
   }
