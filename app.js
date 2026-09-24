@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.72';
+const APP_VERSION = '2.0.73';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number

@@ -315,7 +315,13 @@ def main():
     sorted_stations = {k: all_stations[k] for k in sorted(all_stations.keys())}
 
     with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(sorted_stations, f, separators=(',', ':'), ensure_ascii=False)
+        f.write("{\n")
+        items = list(sorted_stations.items())
+        for i, (k, v) in enumerate(items):
+            comma = "," if i < len(items) - 1 else ""
+            val_str = json.dumps(v, ensure_ascii=False)
+            f.write(f'  {json.dumps(k)}: {val_str}{comma}\n')
+        f.write("}\n")
 
     size_bytes = os.path.getsize(output_file)
     print(f"\nSuccessfully generated {output_file}:")
