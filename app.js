@@ -7,7 +7,7 @@ const STORAGE_DEVICES = 'hdhr_saved_devices';
 const STORAGE_THEME = 'hdhr_theme';
 const STORAGE_CONFIRM_DELETE = 'hdhr_confirm_delete';
 const STORAGE_ACTIVE_TAB = 'hdhr_active_tab';
-const APP_VERSION = '2.0.71';
+const APP_VERSION = '2.0.72';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -1078,44 +1078,7 @@ async function updateSystemLiveStatus() {
     }
 
     // 5. Render Storage (Used / Free)
-    if (infoStorage) {
-      // Check if state.deviceInfo has space info, or if port 4999 has it
-      if (!state.deviceInfo?.TotalSpace) {
-        try {
-          const dvrRes = await fetch(`http://${ip}:4999/discover.json`);
-          if (dvrRes.ok) {
-            const dvrData = await dvrRes.json();
-            if (dvrData.TotalSpace) {
-              state.deviceInfo = { ...state.deviceInfo, ...dvrData };
-            }
-          }
-        } catch (e) {}
-      }
-
-      if (state.deviceInfo?.TotalSpace && state.deviceInfo?.FreeSpace) {
-        const totalGb = (state.deviceInfo.TotalSpace / (1024 * 1024 * 1024)).toFixed(1);
-        const freeGb = (state.deviceInfo.FreeSpace / (1024 * 1024 * 1024)).toFixed(1);
-        const usedBytes = state.deviceInfo.TotalSpace - state.deviceInfo.FreeSpace;
-        const usedGb = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
-        const usedPercent = Math.round((usedBytes / state.deviceInfo.TotalSpace) * 100);
-
-        infoStorage.innerHTML = `<span><strong>${freeGb} GB free</strong> of ${totalGb} GB (${usedPercent}% used)</span>`;
-        if (infoStorageBarWrap && infoStorageBarFill) {
-          infoStorageBarWrap.classList.remove('hidden');
-          infoStorageBarFill.style.width = `${usedPercent}%`;
-          if (usedPercent > 90) {
-            infoStorageBarFill.style.backgroundColor = '#ef4444';
-          } else if (usedPercent > 75) {
-            infoStorageBarFill.style.backgroundColor = '#f59e0b';
-          } else {
-            infoStorageBarFill.style.backgroundColor = '#10b981';
-          }
-        }
-      } else {
-        infoStorage.innerHTML = '<span class="text-muted" style="font-weight: normal;">None detected</span>';
-        if (infoStorageBarWrap) infoStorageBarWrap.classList.add('hidden');
-      }
-    }
+    await refreshStorageUsage();
   } catch (err) {
     console.warn('Error updating system live status:', err);
   }
@@ -3061,26 +3024,115 @@ function setupDvrPills() {
 }
 
 function updateStorageBar() {
-  if (state.deviceInfo?.TotalSpace && state.deviceInfo?.FreeSpace) {
-    dvrStorageBarCard.classList.remove('hidden');
+  if (state.deviceInfo?.TotalSpace && typeof state.deviceInfo?.FreeSpace === 'number') {
+    if (dvrStorageBarCard) dvrStorageBarCard.classList.remove('hidden');
     const totalGb = (state.deviceInfo.TotalSpace / (1024 * 1024 * 1024)).toFixed(1);
     const freeGb = (state.deviceInfo.FreeSpace / (1024 * 1024 * 1024)).toFixed(1);
     const usedBytes = state.deviceInfo.TotalSpace - state.deviceInfo.FreeSpace;
     const usedGb = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
     const usedPercent = Math.round((usedBytes / state.deviceInfo.TotalSpace) * 100);
 
-    storageSpaceText.textContent = `${freeGb} GB free of ${totalGb} GB (${usedPercent}% used)`;
-    storageBarFill.style.width = `${usedPercent}%`;
-    if (usedPercent > 90) {
-      storageBarFill.className = 'metric-bar-fill poor';
-    } else if (usedPercent > 75) {
-      storageBarFill.className = 'metric-bar-fill fair';
-    } else {
-      storageBarFill.className = 'metric-bar-fill good';
+    if (storageSpaceText) storageSpaceText.textContent = `${freeGb} GB free of ${totalGb} GB (${usedPercent}% used)`;
+    if (storageBarFill) {
+      storageBarFill.style.width = `${usedPercent}%`;
+      if (usedPercent > 90) {
+        storageBarFill.className = 'metric-bar-fill poor';
+      } else if (usedPercent > 75) {
+        storageBarFill.className = 'metric-bar-fill fair';
+      } else {
+        storageBarFill.className = 'metric-bar-fill good';
+      }
     }
   } else {
-    dvrStorageBarCard.classList.add('hidden');
+    if (dvrStorageBarCard) dvrStorageBarCard.classList.add('hidden');
   }
+}
+
+function renderSystemStorage() {
+  if (!infoStorage) return;
+
+  if (state.deviceInfo?.TotalSpace && typeof state.deviceInfo?.FreeSpace === 'number') {
+    const totalGb = (state.deviceInfo.TotalSpace / (1024 * 1024 * 1024)).toFixed(1);
+    const freeGb = (state.deviceInfo.FreeSpace / (1024 * 1024 * 1024)).toFixed(1);
+    const usedBytes = state.deviceInfo.TotalSpace - state.deviceInfo.FreeSpace;
+    const usedGb = (usedBytes / (1024 * 1024 * 1024)).toFixed(1);
+    const usedPercent = Math.round((usedBytes / state.deviceInfo.TotalSpace) * 100);
+
+    infoStorage.innerHTML = `<span><strong>${freeGb} GB free</strong> of ${totalGb} GB (${usedPercent}% used)</span>`;
+    if (infoStorageBarWrap && infoStorageBarFill) {
+      infoStorageBarWrap.classList.remove('hidden');
+      infoStorageBarFill.style.width = `${usedPercent}%`;
+      if (usedPercent > 90) {
+        infoStorageBarFill.style.backgroundColor = '#ef4444';
+      } else if (usedPercent > 75) {
+        infoStorageBarFill.style.backgroundColor = '#f59e0b';
+      } else {
+        infoStorageBarFill.style.backgroundColor = '#10b981';
+      }
+    }
+  } else {
+    infoStorage.innerHTML = '<span class="text-muted" style="font-weight: normal;">None detected</span>';
+    if (infoStorageBarWrap) infoStorageBarWrap.classList.add('hidden');
+  }
+}
+
+async function refreshStorageUsage() {
+  const ip = state.currentIp;
+  if (!ip) return;
+
+  const endpointsToTry = [];
+
+  // 1. If we have an explicit StorageURL or dvrStorageUrl, check its origin first
+  const storageUrl = state.dvrStorageUrl || state.deviceInfo?.StorageURL;
+  if (storageUrl) {
+    try {
+      const parsed = new URL(storageUrl);
+      endpointsToTry.push(`${parsed.origin}/discover.json`);
+    } catch (e) {
+      const match = storageUrl.match(/^https?:\/\/[^/]+/);
+      if (match) {
+        endpointsToTry.push(`${match[0]}/discover.json`);
+      }
+    }
+  }
+
+  // 2. Query the current device IP
+  endpointsToTry.push(`http://${ip}/discover.json`);
+
+  // 3. If port is not 4999, also check port 4999 on the same host
+  if (!ip.includes(':4999')) {
+    const hostWithoutPort = ip.split(':')[0];
+    endpointsToTry.push(`http://${hostWithoutPort}:4999/discover.json`);
+  }
+
+  const uniqueEndpoints = [...new Set(endpointsToTry)];
+
+  for (const endpoint of uniqueEndpoints) {
+    try {
+      const cacheBustUrl = endpoint + (endpoint.includes('?') ? '&' : '?') + `_t=${Date.now()}`;
+      const res = await fetch(cacheBustUrl, { cache: 'no-cache' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.TotalSpace && typeof data.FreeSpace === 'number') {
+          state.deviceInfo = {
+            ...state.deviceInfo,
+            TotalSpace: data.TotalSpace,
+            FreeSpace: data.FreeSpace,
+          };
+          if (data.StorageID) state.deviceInfo.StorageID = data.StorageID;
+          if (data.StorageURL) {
+            state.deviceInfo.StorageURL = data.StorageURL;
+            state.dvrStorageUrl = data.StorageURL;
+          }
+          break;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // Update both the DVR storage bar and the System tab storage display
+  updateStorageBar();
+  renderSystemStorage();
 }
 
 function getDvrRecordedFilesUrl(ip) {
@@ -3138,6 +3190,7 @@ async function fetchRecordings(isBackground = false) {
     seriesCountPill.textContent = seriesData.length;
     dvrEngineInfo.textContent = `Connected to recording engine (${state.deviceInfo?.FriendlyName || ip})`;
     updateStorageBar();
+    refreshStorageUsage();
 
     // Concurrently fetch episodes for each series
     const episodePromises = seriesData.map(async (item) => {
@@ -3656,8 +3709,15 @@ async function deleteEpisode(ep) {
     episodesCountPill.textContent = state.episodes.length;
     recordingsCountBadge.textContent = state.episodes.length;
     renderCurrentDvrSubView();
-    // Refresh storage bar and list in background
-    setTimeout(() => fetchRecordings(true), 1200);
+
+    // Immediately refresh storage usage so the delete is reflected right away
+    await refreshStorageUsage();
+
+    // Refresh recordings and confirm storage after background engine settles
+    setTimeout(async () => {
+      await fetchRecordings(true);
+      await refreshStorageUsage();
+    }, 1200);
   } catch (err) {
     console.error('Delete error:', err);
     showAlert(`Failed to delete recording: ${err.message}`, 'error');
@@ -3677,16 +3737,32 @@ async function deleteSeries(series, matchingEpisodes) {
       try {
         const deleteUrl = ep.CmdURL + (ep.CmdURL.includes('?') ? '&' : '?') + 'cmd=delete&rerecord=0';
         const res = await fetch(deleteUrl, { method: 'POST' });
-        if (res.ok) deletedCount++;
+        if (res.ok) {
+          deletedCount++;
+          state.episodes = state.episodes.filter((e) => e.CmdURL !== ep.CmdURL && e.PlayURL !== ep.PlayURL);
+        }
       } catch (e) {
         console.warn('Failed to delete episode', ep.Title, e);
       }
     }
   }
 
+  state.series = state.series.filter((s) => s.SeriesID !== series.SeriesID);
+  seriesCountPill.textContent = state.series.length;
+  episodesCountPill.textContent = state.episodes.length;
+  recordingsCountBadge.textContent = state.episodes.length;
+
   showToast(`Deleted ${deletedCount} episode(s) of "${series.Title || 'Series'}"`);
   state.selectedSeriesId = null;
-  setTimeout(() => fetchRecordings(true), 1000);
+  renderCurrentDvrSubView();
+
+  // Immediately refresh storage usage so the deletes are reflected right away
+  await refreshStorageUsage();
+
+  setTimeout(async () => {
+    await fetchRecordings(true);
+    await refreshStorageUsage();
+  }, 1000);
 }
 
 /* ==========================================================================
