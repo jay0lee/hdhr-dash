@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.74';
+const APP_VERSION = '2.0.75';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -3066,19 +3066,7 @@ function renderLineup() {
   });
 
   // Attach clipboard copy listeners
-  document.querySelectorAll('.btn-copy-url').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const url = btn.getAttribute('data-url');
-      try {
-        await navigator.clipboard.writeText(url);
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '✓ Copied!';
-        setTimeout(() => (btn.innerHTML = originalText), 1500);
-      } catch (err) {
-        console.error('Failed to copy', err);
-      }
-    });
-  });
+  attachCopyUrlListeners(lineupTbody);
 
   // Attach single-channel M3U download listeners
   document.querySelectorAll('.btn-download-m3u').forEach((btn) => {
@@ -3569,19 +3557,7 @@ function renderEpisodes(episodes) {
   });
 
   // Attach clipboard copy listeners
-  recordingsContainer.querySelectorAll('.btn-copy-url').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const url = btn.getAttribute('data-url');
-      try {
-        await navigator.clipboard.writeText(url);
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '✓ Copied!';
-        setTimeout(() => (btn.innerHTML = originalText), 1500);
-      } catch (err) {
-        console.error('Failed to copy', err);
-      }
-    });
-  });
+  attachCopyUrlListeners(recordingsContainer);
 
   // Attach single-episode M3U download listeners
   recordingsContainer.querySelectorAll('.btn-download-m3u').forEach((btn) => {
@@ -4472,25 +4448,54 @@ async function copyDiagnosticsToClipboard() {
   const processed = processDiagnostics(state.lastDiagnostics, shouldRedact);
   const jsonStr = JSON.stringify(processed, null, 2);
 
-  try {
-    await navigator.clipboard.writeText(jsonStr);
+  if (await copyTextToClipboard(jsonStr)) {
     showCopyFeedback();
-  } catch (err) {
-    const textarea = document.createElement('textarea');
-    textarea.value = jsonStr;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
+  } else {
+    alert('Failed to copy to clipboard. Use Download JSON instead.');
+  }
+}
+
+// navigator.clipboard only exists in secure contexts (HTTPS or localhost), so fall back to
+// execCommand('copy') when the dashboard is self-hosted over plain HTTP on a LAN address.
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
     try {
-      document.execCommand('copy');
-      showCopyFeedback();
-    } catch (fallbackErr) {
-      alert('Failed to copy to clipboard: ' + fallbackErr.message);
-    } finally {
-      document.body.removeChild(textarea);
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      // Fall through to the legacy path (e.g. permission denied)
     }
   }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    return document.execCommand('copy');
+  } catch (err) {
+    return false;
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function attachCopyUrlListeners(container) {
+  container.querySelectorAll('.btn-copy-url').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const url = btn.getAttribute('data-url');
+      if (await copyTextToClipboard(url)) {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✓ Copied!';
+        setTimeout(() => (btn.innerHTML = originalText), 1500);
+      } else {
+        showToast(`Couldn't copy automatically. URL: ${url}`);
+      }
+    });
+  });
 }
 
 function showCopyFeedback() {
