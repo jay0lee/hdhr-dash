@@ -186,44 +186,26 @@ Once installed, HDHR Dash opens in its own window without browser toolbars, runs
 
 ## 💻 Running Locally (Self-Hosting with HTTPS)
 
-If you prefer to host HDHR Dash yourself on a home server or run it completely disconnected from GitHub Pages, serve it over **HTTPS** using the included local server script.
+Modern browser APIs (Clipboard copy, Service Worker offline caching, and PWA installation) require **HTTPS**. When running on a home server or accessing from another device on your network, Chrome and other browsers block these features over plain HTTP.
 
-> [!IMPORTANT]
-> **Why HTTPS is Required:** Modern browser APIs (including Clipboard Copy for streaming URLs/diagnostics, Service Worker offline caching, and PWA installation) require a **Secure Context (HTTPS)**. When accessing HDHR Dash across your home network from another device (like an Android phone, tablet, or secondary computer), browsers like Chrome and Edge block these features over plain HTTP.
+Run HDHR Dash with HTTPS using the included script:
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/jay0lee/hdhr-dash.git
 cd hdhr-dash
-
-# 2. Start the local HTTPS server
 python3 scripts/serve-https.py
 ```
 
-By default, the script binds to port `8443` and prints direct links for both your local machine and your home network:
-* **Local:** `https://localhost:8443`
-* **Network (LAN):** `https://<YOUR_LAN_IP>:8443`
+Then open `https://localhost:8443` (or the network LAN IP displayed in your terminal).
 
-You can optionally specify a custom port or use an ephemeral certificate:
-```bash
-# Custom port
-python3 scripts/serve-https.py 8080
+### ⚠️ Overriding the Browser Warning
 
-# Ephemeral certificate (deleted on server exit)
-python3 scripts/serve-https.py --temp
-```
+Because this uses a temporary self-signed certificate, your browser will show a warning on first visit (*"Your connection is not private"* or `NET::ERR_CERT_AUTHORITY_INVALID`):
 
-### ⚠️ Overriding the Browser Certificate Warning
-
-Because the local server generates a self-signed certificate, your browser will display a security warning on your first visit (e.g., *"Your connection is not private"* or `NET::ERR_CERT_AUTHORITY_INVALID`).
-
-To proceed past the warning:
-* **Chrome / Edge (Desktop):** Click **Advanced** &rarr; **Proceed to ... (unsafe)**. *(If no link appears, click anywhere on the warning page background and type `thisisunsafe`).*
+* **Chrome / Edge:** Click **Advanced** &rarr; **Proceed to localhost (unsafe)**. *(If no button appears, click anywhere on the warning page and type `thisisunsafe`).*
 * **Android Chrome:** Tap **Advanced** &rarr; **Proceed to [IP] (unsafe)**.
-* **Safari (macOS / iOS):** Click **Show Details** &rarr; **visit this website**.
+* **Safari:** Click **Show Details** &rarr; **visit this website**.
 * **Firefox:** Click **Advanced** &rarr; **Accept the Risk and Continue**.
-
-Once bypassed, all features (including one-click clipboard copying, tuner telemetry, and PWA installation) will work seamlessly.
 
 ---
 
