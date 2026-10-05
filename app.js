@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.74';
+const APP_VERSION = '2.0.75';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -1034,22 +1034,75 @@ function parseDeviceStatus(statusItems, ip) {
     }
   });
 
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // Helper to format clean recording title & channel
+  const formatRecordingEntry = (rawTitle, vctNum, vctName, targetIp, matchedEp) => {
+    let showTitle = '';
+    let epDetail = '';
+
+    if (matchedEp) {
+      showTitle = matchedEp.Title || '';
+      if (matchedEp.EpisodeTitle) {
+        epDetail = matchedEp.EpisodeNumber ? `${matchedEp.EpisodeNumber}: ${matchedEp.EpisodeTitle}` : matchedEp.EpisodeTitle;
+      } else if (matchedEp.EpisodeNumber) {
+        epDetail = matchedEp.EpisodeNumber;
+      }
+    } else if (rawTitle) {
+      // Strip trailing bracketed timestamp like [20260924-1300]
+      showTitle = rawTitle.replace(/\s*\[\d{8}-\d{4}\]$/, '').trim();
+    }
+
+    const titlePart = showTitle ? (epDetail ? `${showTitle} - ${epDetail}` : showTitle) : 'DVR Recording';
+    const chNum = vctNum || matchedEp?.ChannelNumber || '';
+    const chName = vctName || matchedEp?.ChannelName || '';
+    const chPart = chNum ? (chName ? `Ch ${chNum} ${chName}` : `Ch ${chNum}`) : chName;
+    const displayLabel = chPart ? `${titlePart} (${chPart})` : titlePart;
+
+    return {
+      channel: displayLabel,
+      channelNumber: chNum ? String(chNum) : '',
+      channelName: chName || '',
+      programTitle: showTitle || rawTitle || '',
+      target: targetIp || 'HDHR Storage',
+      episodeId: matchedEp?.CmdURL || matchedEp?.EpisodeNumber || '',
+    };
+  };
+
+  // Helper to find matching episode from state.episodes
+  const findMatchingEpisode = (s) => {
+    if (!Array.isArray(state.episodes) || state.episodes.length === 0) return null;
+    return state.episodes.find((ep) => {
+      const chMatch = s.VctNumber && (String(ep.ChannelNumber) === String(s.VctNumber) || (ep.ChannelName && s.VctName && ep.ChannelName.toLowerCase() === s.VctName.toLowerCase()));
+      const timeMatch = ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1;
+      const playbackMatch = isEpisodeMatchingPlayback(ep, s);
+      return (timeMatch && (chMatch || playbackMatch)) || playbackMatch;
+    });
+  };
+
   // Check liveSessions (sessions from HTTP streaming, DVR record engines, or DVR playback)
   liveSessions.forEach((s) => {
     const isRecord =
       (s.Resource && s.Resource.toLowerCase().includes('record')) ||
-      (s.Name && s.Name.toLowerCase().includes('record'));
+      (s.Name && (s.Name.toLowerCase().startsWith('record') || s.Name.toLowerCase() === 'record'));
     const isPlayback =
       (s.Resource && s.Resource.toLowerCase().includes('playback')) ||
-      (s.Name && s.Name.toLowerCase().includes('playback'));
+      (s.Name && (s.Name.toLowerCase().startsWith('playback') || s.Name.toLowerCase() === 'playback'));
 
     if (isRecord) {
-      const name = s.Name ? `Ch ${s.Name}` : 'DVR Recording';
-      if (!activeRecordings.some((r) => r.channel === name)) {
-        activeRecordings.push({
-          channel: name,
-          target: s.TargetIP || 'Local',
-        });
+      const matchedEp = findMatchingEpisode(s);
+      const entry = formatRecordingEntry(s.Name, s.VctNumber, s.VctName, s.TargetIP, matchedEp);
+
+      // Deduplicate: avoid duplicate active recording entries for the same channel, episode, or label
+      const alreadyExists = activeRecordings.some((r) => {
+        if (entry.channelNumber && r.channelNumber && entry.channelNumber === r.channelNumber) return true;
+        if (entry.episodeId && r.episodeId && entry.episodeId === r.episodeId) return true;
+        if (entry.channel === r.channel) return true;
+        return false;
+      });
+
+      if (!alreadyExists) {
+        activeRecordings.push(entry);
       }
     } else if (isPlayback) {
       activePlaybacks.push({
@@ -1065,8 +1118,9 @@ function parseDeviceStatus(statusItems, ip) {
       s.TargetIP !== '[::1]'
     ) {
       // Find matching tuner if available
-      const matchingTuner = physicalTuners.find(
-        (t) => t.VctNumber && s.Name && s.Name.includes(t.VctNumber)
+      const matchingTuner = physicalTuners.find((t) =>
+        (t.VctNumber && (s.VctNumber === t.VctNumber || (s.Name && s.Name.includes(t.VctNumber)))) ||
+        (t.VctName && (s.VctName === t.VctName || (s.Name && s.Name.includes(t.VctName))))
       );
 
       // Do not duplicate if this exact tuner stream was already counted directly on physicalTuners
@@ -1078,6 +1132,8 @@ function parseDeviceStatus(statusItems, ip) {
         let chLabel = '';
         if (matchingTuner) {
           chLabel = `Ch ${matchingTuner.VctNumber}${matchingTuner.VctName ? ' ' + matchingTuner.VctName : ''}`;
+        } else if (s.VctNumber) {
+          chLabel = `Ch ${s.VctNumber}${s.VctName ? ' ' + s.VctName : ''}`;
         } else if (s.Name) {
           chLabel = s.Name.replace(/^Live channel\s+/i, 'Ch ');
           if (!chLabel.startsWith('Ch ')) chLabel = `Ch ${chLabel}`;
@@ -1091,18 +1147,22 @@ function parseDeviceStatus(statusItems, ip) {
     }
   });
 
-  // Check if the HDHR itself is currently writing an in-progress recording to its storage drive
-  const nowSec = Math.floor(Date.now() / 1000);
+  // Fallback: Check if there are in-progress recordings in state.episodes not already captured by status.json
   if (Array.isArray(state.episodes)) {
     state.episodes.forEach((ep) => {
       if (ep.StartTime && ep.EndTime && ep.StartTime <= nowSec && ep.EndTime > nowSec && ep.RecordSuccess !== 1) {
-        const epLabel = ep.EpisodeTitle ? `${ep.Title}: ${ep.EpisodeTitle}` : (ep.Title || 'DVR Recording');
-        const fullLabel = ep.ChannelNumber ? `${epLabel} (Ch ${ep.ChannelNumber})` : epLabel;
-        if (!activeRecordings.some((r) => r.channel === fullLabel)) {
-          activeRecordings.push({
-            channel: fullLabel,
-            target: 'HDHR Storage',
-          });
+        const epChNum = ep.ChannelNumber ? String(ep.ChannelNumber) : '';
+        const alreadyCounted = activeRecordings.some((r) => {
+          if (r.episodeId && ep.CmdURL && r.episodeId === ep.CmdURL) return true;
+          if (epChNum && r.channelNumber && r.channelNumber === epChNum) return true;
+          if (ep.ChannelName && r.channelName && ep.ChannelName.toLowerCase() === r.channelName.toLowerCase()) return true;
+          if (r.programTitle && ep.Title && isEpisodeMatchingPlayback(ep, { name: r.programTitle })) return true;
+          return false;
+        });
+
+        if (!alreadyCounted) {
+          const entry = formatRecordingEntry('', ep.ChannelNumber, ep.ChannelName, 'HDHR Storage', ep);
+          activeRecordings.push(entry);
         }
       }
     });
@@ -1186,8 +1246,9 @@ async function updateSystemLiveStatus() {
         infoActiveRecordings.innerHTML = '<span class="text-muted" style="font-weight: normal;">None (Idle)</span>';
       } else {
         const countText = activeRecordings.length === 1 ? '1 Active' : `${activeRecordings.length} Active`;
+        const recDetails = activeRecordings.map((r) => r.channel).join('\n');
         infoActiveRecordings.innerHTML = `
-          <a href="#recordings" class="status-link" title="View details on Recordings tab">
+          <a href="#recordings" class="status-link" title="${recDetails ? recDetails + ' • ' : ''}View details on Recordings tab">
             <span class="badge badge-active-record">🔴 ${countText}</span>
             <span class="status-arrow">Recordings ↗</span>
           </a>
@@ -1607,13 +1668,15 @@ function renderTuners(statusItems) {
 
       // Check liveSessions (Resource: "live" or "record") from status.json
       const matchingSessions = liveSessions.filter((s) => {
+        if (s.VctNumber && tuner.VctNumber && s.VctNumber === tuner.VctNumber) return true;
+        if (s.VctName && tuner.VctName && s.VctName.toLowerCase() === tuner.VctName.toLowerCase()) return true;
         if (!s.Name) return false;
         return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
       });
 
       matchingSessions.forEach((s) => {
         const isRecord = (s.Resource && s.Resource.toLowerCase().includes('record')) ||
-                         (s.Name && s.Name.toLowerCase().includes('record'));
+                         (s.Name && (s.Name.toLowerCase().startsWith('record') || s.Name.toLowerCase() === 'record'));
         if (!clientSessions.some((c) => c.ip === s.TargetIP && c.type === (isRecord ? 'record' : 'client'))) {
           clientSessions.push({
             type: isRecord ? 'record' : 'client',
@@ -1984,13 +2047,15 @@ function updateTunerDetailView(tunerData, liveSessions = []) {
   }
 
   const matchingSessions = (liveSessions || []).filter((s) => {
+    if (s.VctNumber && tuner.VctNumber && s.VctNumber === tuner.VctNumber) return true;
+    if (s.VctName && tuner.VctName && s.VctName.toLowerCase() === tuner.VctName.toLowerCase()) return true;
     if (!s.Name) return false;
     return tuner.VctNumber && s.Name.includes(tuner.VctNumber);
   });
 
   matchingSessions.forEach((s) => {
     const isRecord = (s.Resource && s.Resource.toLowerCase().includes('record')) ||
-                     (s.Name && s.Name.toLowerCase().includes('record'));
+                     (s.Name && (s.Name.toLowerCase().startsWith('record') || s.Name.toLowerCase() === 'record'));
     if (!clientSessions.some((c) => c.ip === s.TargetIP && c.type === (isRecord ? 'record' : 'client'))) {
       clientSessions.push({
         type: isRecord ? 'record' : 'client',
@@ -3348,6 +3413,9 @@ async function fetchRecordings(isBackground = false) {
         if (Array.isArray(statusItems)) {
           state.tuners = statusItems;
           parseDeviceStatus(statusItems, ip);
+          if (state.activeTab === 'system') {
+            updateSystemLiveStatus();
+          }
         }
       }
     } catch (e) {

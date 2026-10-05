@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SSL certificates and private keys
+*.pem
+*.key
+*.crt
+
+# macOS
+.DS_Store
