@@ -371,26 +371,28 @@
         this.context.resume().catch(() => {});
       }
 
-      // Schedule next playback time contiguously (gapless)
-      let startTime = this.nextPlayTime;
-      if (!startTime || startTime < curTime) {
-        // Buffer underflow or initial frame: start 80ms ahead to cushion against JS GC/worker bursts
-        startTime = curTime + 0.080;
-      } else if (startTime > curTime + 3.0) {
-        // Prevent excessive accumulation if tab was backgrounded or starved
-        startTime = curTime + 0.200;
-      }
-      this.nextPlayTime = startTime + duration;
+      // Target jitter cushion: 800ms of audio pre-buffering to absorb segment decode variance
+      const TARGET_CUSHION = 0.800;
 
-      // Update monotonic master audio clock
-      if (
-        this.baseAudioPts === null ||
-        curTime > this.nextPlayTime ||
-        Math.abs(this.getMasterClockPts() - pts) > 1.5
-      ) {
+      let startTime = this.nextPlayTime;
+      const isUnderflow = !startTime || startTime < curTime;
+      const isOverAccumulated = startTime > curTime + 2.5;
+
+      if (isUnderflow || isOverAccumulated || this.baseAudioPts === null) {
+        // Buffer underflow or initial frame: schedule TARGET_CUSHION ahead
+        startTime = curTime + TARGET_CUSHION;
         this.baseAudioPts = pts;
         this.baseContextTime = startTime;
+      } else {
+        // Resync base clock on massive timestamp discontinuity (> 2.0s)
+        const expectedPts = this.baseAudioPts + (startTime - this.baseContextTime);
+        if (Math.abs(pts - expectedPts) > 2.0) {
+          this.baseAudioPts = pts;
+          this.baseContextTime = startTime;
+        }
       }
+
+      this.nextPlayTime = startTime + duration;
 
       const buffer = this.context.createBuffer(2, lArr.length, sampleRate);
       buffer.getChannelData(0).set(lArr);
@@ -408,12 +410,25 @@
     }
 
     /**
+     * Check if audio playback is currently starved (underflowed).
+     */
+    isStarved() {
+      return !this.context || !this.nextPlayTime || this.context.currentTime >= this.nextPlayTime;
+    }
+
+    /**
      * Current master clock time in presentation seconds.
      */
     getMasterClockPts() {
       if (!this.context || this.baseAudioPts === null) return null;
-      const elapsed = this.context.currentTime - this.baseContextTime;
-      return this.baseAudioPts + Math.max(0, elapsed);
+      const curTime = this.context.currentTime;
+      // If audio has drained/starved, clamp clock to the end of scheduled audio to prevent clock runaway
+      if (this.nextPlayTime && curTime > this.nextPlayTime) {
+        const maxElapsed = this.nextPlayTime - this.baseContextTime;
+        return this.baseAudioPts + maxElapsed;
+      }
+      const elapsed = curTime - this.baseContextTime;
+      return this.baseAudioPts + elapsed;
     }
 
     setVolume(vol) {
@@ -466,6 +481,7 @@
       this.renderer = videoRenderer;
       this.audio = audioPlayer;
       this.onFrameStats = options.onFrameStats || null;
+      this.onFrameDrop = options.onFrameDrop || null;
 
       this.videoQueue = [];
       this.isRunning = false;
@@ -513,8 +529,8 @@
 
     queueVideoFrame(frame) {
       this.videoQueue.push(frame);
-      // Keep queue bounded to prevent memory growth if audio is delayed
-      if (this.videoQueue.length > 60) {
+      // Keep queue bounded to prevent memory growth if audio is delayed (120 frames = ~4s)
+      if (this.videoQueue.length > 120) {
         this.videoQueue.shift();
         this.droppedFrames++;
       }
@@ -547,26 +563,29 @@
             break;
           }
 
-          let delta = next.pts - masterPts;
+          const delta = next.pts - masterPts;
 
-          // On first frame or if clock skew exceeds 0.5s, align audio master clock to video frame PTS
-          if (this.renderedFrames === 0 || Math.abs(delta) > 0.500) {
-            if (this.audio && this.audio.context) {
-              this.audio.baseAudioPts = next.pts;
-              this.audio.baseContextTime = this.audio.context.currentTime;
-              delta = 0;
-            }
+          // Discontinuity check: if delta > 3.0s, discard stale frames to match audio clock
+          if (Math.abs(delta) > 3.0) {
+            this.videoQueue.shift();
+            continue;
           }
 
-          if (delta < -0.100 && this.videoQueue.length > 1) {
-            // Video frame is > 100ms late and newer frame is waiting: drop stale frame
+          // If audio is currently starved (underflowed), pause video presentation rather than panic dropping
+          if (this.audio && this.audio.isStarved()) {
+            break;
+          }
+
+          // If frame is > 120ms late and a newer frame is waiting: drop stale frame to catch up
+          if (delta < -0.120 && this.videoQueue.length > 1) {
+            if (this.onFrameDrop) this.onFrameDrop(next.pts, masterPts, delta);
             this.videoQueue.shift();
             this.droppedFrames++;
             continue;
           }
 
-          if (delta <= 0.015) {
-            // Frame is ready for display (within 15ms of audio clock)
+          // Frame is ready for display (within 35ms of master audio clock)
+          if (delta <= 0.035) {
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,
@@ -581,7 +600,7 @@
             break;
           }
 
-          // Frame is ahead of audio clock: hold until audio catches up
+          // Frame is ahead of audio clock (delta > 35ms): hold until audio catches up
           break;
         }
       } else if (this.videoQueue.length > 0) {

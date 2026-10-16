@@ -82,17 +82,47 @@ function updateHeader(chunk) {
   }
 }
 
-function hasSeqHeader(chunk) {
-  const len = chunk.length - 4;
-  for (let i = 0; i <= len; i++) {
-    if (chunk[i] === 0 && chunk[i + 1] === 0 && chunk[i + 2] === 1) {
-      const code = chunk[i + 3];
-      if (code === 0xb3 || code === 0xb8) {
-        return true;
+function findGOPBoundaryPacket(chunk, videoPid) {
+  const len = chunk.length;
+  for (let i = 0; i + 188 <= len; i++) {
+    if (chunk[i] !== 0x47) continue;
+
+    // Verify 188-byte cadence if more data remains
+    if (i + 376 <= len && chunk[i + 188] !== 0x47) {
+      continue;
+    }
+
+    const tei = (chunk[i + 1] & 0x80) !== 0;
+    if (tei) continue;
+
+    const pusi = (chunk[i + 1] & 0x40) !== 0;
+    const pid = ((chunk[i + 1] & 0x1f) << 8) | chunk[i + 2];
+
+    const isVideo = (videoPid !== null && pid === videoPid) ||
+                    (demuxer && (pid === demuxer.videoPid || demuxer.videoPids.has(pid))) ||
+                    (pid >= 0x20 && pid <= 0x1ffe);
+
+    if (pusi && isVideo) {
+      const afc = (chunk[i + 3] >> 4) & 0x03;
+      if (afc === 2) continue; // AF only
+      let payloadOffset = i + 4;
+      if (afc === 3) {
+        payloadOffset += 1 + chunk[i + 4]; // skip adaptation field
+      }
+
+      if (payloadOffset + 4 <= i + 188) {
+        for (let j = payloadOffset; j + 3 < i + 188; j++) {
+          if (chunk[j] === 0 && chunk[j + 1] === 0 && chunk[j + 2] === 1) {
+            const code = chunk[j + 3];
+            if (code === 0xb3 || code === 0xb8) {
+              return i; // Exact 188-byte packet boundary
+            }
+          }
+        }
       }
     }
   }
-  return false;
+  return -1;
 }
 
 // Helper to run FFmpeg CLI commands in WebAssembly
@@ -219,54 +249,16 @@ function processSegment() {
     }
 
     if (streamVideoPts === null) {
-      streamVideoPts = 0;
+      streamVideoPts = (demuxer && demuxer.stats.lastVideoPts !== null) ? demuxer.stats.lastVideoPts : 0;
     }
     if (streamAudioPts === null) {
-      streamAudioPts = streamVideoPts;
+      streamAudioPts = (demuxer && demuxer.stats.lastAudioPts !== null) ? demuxer.stats.lastAudioPts : streamVideoPts;
     }
 
     const frameDur = 1.0 / videoFps;
 
-    // 1. Process and transfer decoded YUV420P video frames
-    if (yuv && yuv.length > 0) {
-      const frameBytes = videoWidth * videoHeight * 1.5;
-      const numFrames = Math.floor(yuv.length / frameBytes);
-      const yPlaneSize = videoWidth * videoHeight;
-      const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
-
-      let curVideoPts = streamVideoPts;
-
-      for (let f = 0; f < numFrames; f++) {
-        const frameOffset = f * frameBytes;
-        const yData = yuv.subarray(frameOffset, frameOffset + yPlaneSize);
-        const uData = yuv.subarray(frameOffset + yPlaneSize, frameOffset + yPlaneSize + uvPlaneSize);
-        const vData = yuv.subarray(frameOffset + yPlaneSize + uvPlaneSize, frameOffset + frameBytes);
-
-        // Copy into standalone Transferable buffers
-        const yBuf = new Uint8Array(yData).buffer;
-        const uBuf = new Uint8Array(uData).buffer;
-        const vBuf = new Uint8Array(vData).buffer;
-
-        self.postMessage(
-          {
-            type: 'VIDEO_FRAME',
-            pts: curVideoPts,
-            width: videoWidth,
-            height: videoHeight,
-            isInterlaced,
-            y: yBuf,
-            u: uBuf,
-            v: vBuf,
-          },
-          [yBuf, uBuf, vBuf]
-        );
-
-        curVideoPts += frameDur;
-      }
-      streamVideoPts = curVideoPts;
-    }
-
-    // 2. Process and transfer decoded 48 kHz stereo Float32 PCM audio
+    // 1. Process and transfer decoded 48 kHz stereo Float32 PCM audio FIRST
+    // so master audio clock is updated BEFORE video frames are evaluated by the renderer
     if (pcm && pcm.length > 0) {
       const f32 = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
       const totalStereoSamples = Math.floor(f32.length / 2);
@@ -299,6 +291,45 @@ function processSegment() {
         curAudioPts += chunkLen / 48000;
       }
       streamAudioPts = curAudioPts;
+    }
+
+    // 2. Process and transfer decoded YUV420P video frames
+    if (yuv && yuv.length > 0) {
+      const frameBytes = videoWidth * videoHeight * 1.5;
+      const numFrames = Math.floor(yuv.length / frameBytes);
+      const yPlaneSize = videoWidth * videoHeight;
+      const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
+
+      let curVideoPts = streamVideoPts;
+
+      for (let f = 0; f < numFrames; f++) {
+        const frameOffset = f * frameBytes;
+        const yData = yuv.subarray(frameOffset, frameOffset + yPlaneSize);
+        const uData = yuv.subarray(frameOffset + yPlaneSize, frameOffset + yPlaneSize + uvPlaneSize);
+        const vData = yuv.subarray(frameOffset + yPlaneSize + uvPlaneSize, frameOffset + frameBytes);
+
+        // Fast native slice to standalone Transferable buffers
+        const yBuf = yData.slice().buffer;
+        const uBuf = uData.slice().buffer;
+        const vBuf = vData.slice().buffer;
+
+        self.postMessage(
+          {
+            type: 'VIDEO_FRAME',
+            pts: curVideoPts,
+            width: videoWidth,
+            height: videoHeight,
+            isInterlaced,
+            y: yBuf,
+            u: uBuf,
+            v: vBuf,
+          },
+          [yBuf, uBuf, vBuf]
+        );
+
+        curVideoPts += frameDur;
+      }
+      streamVideoPts = curVideoPts;
     }
 
     const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) * frameDur;
@@ -341,13 +372,11 @@ function initPipeline() {
     onVideoData: ({ pts }) => {
       if (pts !== null && streamVideoPts === null) {
         streamVideoPts = pts;
-        if (streamAudioPts === null) streamAudioPts = pts;
       }
     },
     onAudioData: ({ pts }) => {
       if (pts !== null && streamAudioPts === null) {
         streamAudioPts = pts;
-        if (streamVideoPts === null) streamVideoPts = pts;
       }
     },
     onError: (err) => {
@@ -393,10 +422,11 @@ self.onmessage = function (e) {
         const uint8 = new Uint8Array(msg.chunk);
         updateHeader(uint8);
 
-        const isGopBoundary = hasSeqHeader(uint8);
+        const videoPid = demuxer ? demuxer.videoPid : null;
+        const gopPktOffset = findGOPBoundaryPacket(uint8, videoPid);
 
         if (!streamStarted) {
-          if (!isGopBoundary && discardedBytes < 1200000) {
+          if (gopPktOffset === -1 && discardedBytes < 1500000) {
             // Discard partial frame packets received before the first clean Sequence Header
             discardedBytes += uint8.length;
             return;
@@ -404,16 +434,33 @@ self.onmessage = function (e) {
           streamStarted = true;
         }
 
-        demuxer.push(uint8);
+        if (gopPktOffset !== -1) {
+          // A new GOP starts at gopPktOffset
+          // 1. Everything before gopPktOffset belongs to the PRECEDING GOP
+          if (gopPktOffset > 0) {
+            const prevTail = uint8.subarray(0, gopPktOffset);
+            streamBuffer.push(prevTail);
+            streamBufferBytes += prevTail.length;
+            demuxer.push(prevTail);
+          }
 
-        // If a GOP boundary is reached and we already have at least 300KB,
-        // process the preceding GOP as a segment!
-        if (core && isGopBoundary && streamBufferBytes >= 300000) {
-          processSegment();
+          // 2. If the preceding GOP has reached minimum segment threshold (>= 350 KB),
+          // flush it as a complete segment now!
+          if (core && streamBufferBytes >= 350000) {
+            processSegment();
+          }
+
+          // 3. The new GOP starts cleanly at gopPktOffset (at the 188-byte packet boundary)
+          const nextHead = uint8.subarray(gopPktOffset);
+          streamBuffer.push(nextHead);
+          streamBufferBytes += nextHead.length;
+          demuxer.push(nextHead);
+        } else {
+          // Continuation chunk inside the current GOP
+          demuxer.push(uint8);
+          streamBuffer.push(uint8);
+          streamBufferBytes += uint8.length;
         }
-
-        streamBuffer.push(uint8);
-        streamBufferBytes += uint8.length;
 
         // Fallback for streams without detected sequence headers: flush at 2.5MB
         if (core && streamBufferBytes >= 2500000) {
