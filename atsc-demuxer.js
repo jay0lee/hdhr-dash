@@ -115,6 +115,9 @@
 
       this.programs = [];
       this.streams = [];
+      this.pmtPids = new Set();
+      this.videoPids = new Set();
+      this.audioPids = new Set();
       this.ccMap = new Map();
       this.pesBuffers = new Map();
 
@@ -271,10 +274,35 @@
       // Route packet payload by PID
       if (pid === 0x0000) {
         this.parsePAT(payload, pusi);
-      } else if (this.pmtPid !== null && pid === this.pmtPid) {
+      } else if (this.pmtPids.has(pid) || (this.pmtPid !== null && pid === this.pmtPid)) {
         this.parsePMT(payload, pusi);
-      } else if (pid === this.videoPid || pid === this.audioPid) {
+      } else if (
+        this.videoPids.has(pid) ||
+        this.audioPids.has(pid) ||
+        pid === this.videoPid ||
+        pid === this.audioPid
+      ) {
         this.parsePES(pid, payload, pusi);
+      } else if (pusi && payload.length >= 4 && payload[0] === 0x00 && payload[1] === 0x00 && payload[2] === 0x01) {
+        // Opportunistic sniff of PES start code
+        const sid = payload[3];
+        if (sid >= 0xe0 && sid <= 0xef) {
+          // Video stream (0xE0 - 0xEF)
+          this.videoPids.add(pid);
+          if (this.videoPid === null) {
+            this.videoPid = pid;
+            this.videoStreamType = 0x02;
+          }
+          this.parsePES(pid, payload, pusi);
+        } else if (sid === 0xbd || (sid >= 0xc0 && sid <= 0xdf)) {
+          // Audio stream (0xBD = AC-3, 0xC0-0xDF = MPEG Audio)
+          this.audioPids.add(pid);
+          if (this.audioPid === null) {
+            this.audioPid = pid;
+            this.audioStreamType = sid === 0xbd ? 0x81 : 0x03;
+          }
+          this.parsePES(pid, payload, pusi);
+        }
       }
     }
 
@@ -301,7 +329,10 @@
         const progPid = ((payload[i + 2] & 0x1f) << 8) | payload[i + 3];
         if (progNum !== 0) {
           // Found program map PID
-          this.pmtPid = progPid;
+          if (this.pmtPid === null) {
+            this.pmtPid = progPid;
+          }
+          this.pmtPids.add(progPid);
           programs.push({ programNumber: progNum, pmtPid: progPid });
         }
       }
@@ -352,6 +383,7 @@
         // 0x0F: AAC ADTS Audio
         if (streamType === 0x02 || streamType === 0x1b) {
           kind = 'video';
+          this.videoPids.add(elemPid);
           if (this.videoPid === null) {
             this.videoPid = elemPid;
             this.videoStreamType = streamType;
@@ -364,6 +396,7 @@
           streamType === 0x0f
         ) {
           kind = 'audio';
+          this.audioPids.add(elemPid);
           if (this.audioPid === null) {
             this.audioPid = elemPid;
             this.audioStreamType = streamType;
@@ -384,6 +417,7 @@
                 payload[dPos + 5] === 0x33    // '3'
               ) {
                 kind = 'audio';
+                this.audioPids.add(elemPid);
                 if (this.audioPid === null) {
                   this.audioPid = elemPid;
                   this.audioStreamType = 0x81;
@@ -391,6 +425,7 @@
               }
             } else if (tag === 0x6a || tag === 0x7a || tag === 0x81) {
               kind = 'audio';
+              this.audioPids.add(elemPid);
               if (this.audioPid === null) {
                 this.audioPid = elemPid;
                 this.audioStreamType = 0x81;
@@ -470,9 +505,10 @@
           }
         }
 
+        const isVid = pid === this.videoPid || this.videoPids.has(pid);
         pes = {
           pid,
-          streamType: pid === this.videoPid ? this.videoStreamType : this.audioStreamType,
+          streamType: isVid ? (this.videoStreamType || 0x02) : (this.audioStreamType || 0x81),
           pts,
           dts,
           chunks: [],
@@ -498,7 +534,11 @@
      * Dispatch an assembled PES packet to listeners and parse elementary metadata.
      */
     dispatchPES(pid, streamType, pts, dts, data) {
-      if (pid === this.videoPid) {
+      const isVideo = pid === this.videoPid || this.videoPids.has(pid);
+      const isAudio = pid === this.audioPid || this.audioPids.has(pid);
+
+      if (isVideo) {
+        if (this.videoPid === null) this.videoPid = pid;
         this.stats.videoPesCount++;
         if (pts !== null) {
           this.stats.lastVideoPts = pts;
@@ -508,9 +548,10 @@
         this.parseVideoSequenceHeader(data);
 
         if (this.onVideoData) {
-          this.onVideoData({ pid, streamType, pts, dts, data });
+          this.onVideoData({ pid, streamType: streamType || this.videoStreamType || 0x02, pts, dts, data });
         }
-      } else if (pid === this.audioPid) {
+      } else if (isAudio) {
+        if (this.audioPid === null) this.audioPid = pid;
         this.stats.audioPesCount++;
         if (pts !== null) {
           this.stats.lastAudioPts = pts;

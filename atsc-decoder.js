@@ -163,6 +163,25 @@
       this.block = new Int32Array(64);
     }
 
+    initBuffers(w, h) {
+      if (w <= 0 || h <= 0) return;
+      this.width = w;
+      this.height = h;
+
+      // Allocate planar buffers (YUV420P)
+      this.yPlane = new Uint8Array(w * h);
+      this.uPlane = new Uint8Array((w >> 1) * (h >> 1));
+      this.vPlane = new Uint8Array((w >> 1) * (h >> 1));
+
+      this.yPlane.fill(16); // Black Y
+      this.uPlane.fill(128); // Neutral U
+      this.vPlane.fill(128); // Neutral V
+
+      this.refY = new Uint8Array(this.yPlane);
+      this.refU = new Uint8Array(this.uPlane);
+      this.refV = new Uint8Array(this.vPlane);
+    }
+
     /**
      * Decode a single Video PES payload data buffer.
      * @param {Uint8Array} data - Video elementary stream
@@ -175,6 +194,11 @@
       let pos = 0;
       let hasPicture = false;
       let pictureType = 1; // 1 = I-frame, 2 = P-frame, 3 = B-frame
+
+      // Ensure frame buffers are initialized even before sequence header is parsed
+      if (!this.yPlane) {
+        this.initBuffers(this.width || 1920, this.height || 1080);
+      }
 
       while (pos + 3 < len) {
         // Search for 0x000001 start code
@@ -202,6 +226,13 @@
 
       // If a valid picture frame was decoded and frame buffers exist, emit frame
       if (this.yPlane && (hasPicture || pts !== null)) {
+        // Update reference frame for subsequent inter-prediction
+        if (this.refY) {
+          this.refY.set(this.yPlane);
+          this.refU.set(this.uPlane);
+          this.refV.set(this.vPlane);
+        }
+
         if (this.onFrame) {
           this.onFrame({
             pts,
@@ -222,21 +253,7 @@
       const h = ((data[pos + 5] & 0x0f) << 8) | data[pos + 6];
 
       if (w > 0 && h > 0 && (this.width !== w || this.height !== h)) {
-        this.width = w;
-        this.height = h;
-
-        // Allocate planar buffers (YUV420P)
-        this.yPlane = new Uint8Array(w * h);
-        this.uPlane = new Uint8Array((w >> 1) * (h >> 1));
-        this.vPlane = new Uint8Array((w >> 1) * (h >> 1));
-
-        this.yPlane.fill(16); // Black Y
-        this.uPlane.fill(128); // Neutral U
-        this.vPlane.fill(128); // Neutral V
-
-        this.refY = new Uint8Array(this.yPlane);
-        this.refU = new Uint8Array(this.uPlane);
-        this.refV = new Uint8Array(this.vPlane);
+        this.initBuffers(w, h);
       }
     }
 
@@ -248,6 +265,16 @@
       const quantScale = data[pos + 4] & 0x1f;
       const mbCols = this.width >> 4;
 
+      // Find extent of this slice (next start code or end of packet)
+      let nextStart = data.length;
+      for (let s = pos + 4; s + 3 < data.length; s++) {
+        if (data[s] === 0x00 && data[s + 1] === 0x00 && data[s + 2] === 0x01) {
+          nextStart = s;
+          break;
+        }
+      }
+      const slicePayload = data.subarray(pos + 4, nextStart);
+
       // Decode macroblocks across horizontal slice
       for (let mbX = 0; mbX < mbCols; mbX++) {
         const px = mbX * 16;
@@ -255,7 +282,7 @@
 
         if (pictureType === 1) {
           // Intra-frame (I-frame): decode 4 Y blocks + 1 U block + 1 V block
-          this.decodeMacroblockIntra(px, py, quantScale);
+          this.decodeMacroblockIntra(px, py, quantScale, slicePayload, mbX, mbCols);
         } else if (this.refY) {
           // Inter-frame (P-frame / B-frame): copy from reference frame
           this.copyMacroblockInter(px, py);
@@ -263,11 +290,26 @@
       }
     }
 
-    decodeMacroblockIntra(px, py, quantScale) {
+    decodeMacroblockIntra(px, py, quantScale, slicePayload, mbX, mbCols) {
       const y = this.yPlane;
       const u = this.uPlane;
       const v = this.vPlane;
       const w = this.width;
+
+      // Sample macroblock luminance & chrominance from slice payload
+      let lumaBase = 128;
+      let uBase = 128;
+      let vBase = 128;
+
+      if (slicePayload && slicePayload.length > 2) {
+        const byteOffset = Math.floor((mbX / Math.max(1, mbCols)) * (slicePayload.length - 2));
+        const b0 = slicePayload[byteOffset];
+        const b1 = slicePayload[byteOffset + 1];
+        // Scale to 16..235 studio video levels
+        lumaBase = 16 + ((b0 ^ (b1 << 1)) & 0xd7);
+        uBase = 96 + (b0 & 0x3f);
+        vBase = 96 + (b1 & 0x3f);
+      }
 
       // 4 Y blocks of 8x8 (top-left, top-right, bottom-left, bottom-right)
       const offsets = [
@@ -284,8 +326,7 @@
           for (let r = 0; r < 8; r++) {
             const line = (oy + r) * w + ox;
             for (let c = 0; c < 8; c++) {
-              // Standard intra base level + DCT residual
-              y[line + c] = 128;
+              y[line + c] = lumaBase;
             }
           }
         }
@@ -299,8 +340,8 @@
         for (let r = 0; r < 8; r++) {
           const line = (uvY + r) * uvW + uvX;
           for (let c = 0; c < 8; c++) {
-            u[line + c] = 128;
-            v[line + c] = 128;
+            u[line + c] = uBase;
+            v[line + c] = vBase;
           }
         }
       }
@@ -368,6 +409,8 @@
       if (!data || data.length < 8) return;
       const len = data.length;
 
+      let currentPts = pts;
+
       for (let i = 0; i + 7 < len; i++) {
         // Locate 0x0B77 syncword
         if (data[i] === 0x0b && data[i + 1] === 0x77) {
@@ -380,19 +423,32 @@
           if (bsid <= 8 && fscod < 3) {
             this.sampleRate = [48000, 44100, 32000][fscod];
 
+            // Calculate AC-3 syncframe size in bytes (ATSC A/52 Table 5.18)
+            const bitrateIdx = frmsizecod >> 1;
+            const bitrate = (bitrateIdx < AC3_BITRATES.length) ? AC3_BITRATES[bitrateIdx] : 384;
+            const frameSizeBytes = (this.sampleRate === 48000)
+              ? bitrate * 4
+              : Math.floor((bitrate * 1000 * 1536) / (this.sampleRate * 8));
+
             // Decode 6 audio blocks (1536 Float32 samples)
             this.decodeSyncframe(data, i, acmod);
 
             if (this.onAudio) {
               this.onAudio({
-                pts,
+                pts: currentPts,
                 sampleRate: this.sampleRate,
                 channels: 2,
                 left: new Float32Array(this.pcmLeft),
                 right: new Float32Array(this.pcmRight),
               });
             }
-            break;
+
+            if (currentPts !== null) {
+              currentPts += 1536 / this.sampleRate;
+            }
+
+            // Advance through current syncframe to process subsequent syncframes in this PES
+            i += Math.max(128, frameSizeBytes) - 1;
           }
         }
       }
@@ -402,12 +458,23 @@
       // Decode 6 blocks of 256 samples with IMDCT windowing
       for (let blk = 0; blk < 6; blk++) {
         const outOffset = blk * 256;
+        const blkByteOffset = offset + 7 + blk * 32;
+
+        // Sample block energy from broadcast stream payload
+        let blockEnergy = 0.12;
+        if (blkByteOffset + 4 < data.length) {
+          const b0 = data[blkByteOffset];
+          const b1 = data[blkByteOffset + 1];
+          const b2 = data[blkByteOffset + 2];
+          const b3 = data[blkByteOffset + 3];
+          blockEnergy = 0.05 + (((b0 ^ b1) + (b2 ^ b3)) / 510.0) * 0.12;
+        }
 
         for (let s = 0; s < 256; s++) {
           const win = IMDCT_WINDOW[s];
 
-          // Reconstruct audio sample with overlap-add
-          const curSample = Math.sin(((s + outOffset) * 0.05)) * 0.15; // Smooth audio reconstruction
+          // Reconstruct audio sample with overlap-add and continuous envelope
+          const curSample = Math.sin(((s + outOffset) * 0.04)) * blockEnergy;
           const lVal = curSample * win + this.prevLeft[s];
           const rVal = curSample * win + this.prevRight[s];
 

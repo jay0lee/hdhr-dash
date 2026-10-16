@@ -516,17 +516,42 @@
         // Synchronize video presentation to audio master clock
         while (this.videoQueue.length > 0) {
           const next = this.videoQueue[0];
+
+          if (next.pts === null || isNaN(next.pts)) {
+            // No timestamp: render immediately
+            const frame = this.videoQueue.shift();
+            this.renderer.renderFrame(
+              frame.y,
+              frame.u,
+              frame.v,
+              frame.width,
+              frame.height,
+              frame.isInterlaced
+            );
+            this.renderedFrames++;
+            this.framesThisSecond++;
+            break;
+          }
+
           const delta = next.pts - masterPts;
 
-          if (delta < -0.050) {
-            // Video is > 50ms behind master audio clock: drop frame!
+          // If clock skew is greater than 2 seconds (e.g. rollover or stream start), resync audio master clock
+          if (Math.abs(delta) > 2.0) {
+            if (this.audio) {
+              this.audio.baseAudioPts = next.pts;
+              this.audio.baseContextTime = this.audio.context ? this.audio.context.currentTime : 0;
+            }
+          }
+
+          if (delta < -0.060 && Math.abs(delta) <= 2.0) {
+            // Video is > 60ms behind master audio clock: drop frame to catch up!
             this.videoQueue.shift();
             this.droppedFrames++;
             continue;
           }
 
-          if (delta <= 0.015) {
-            // Frame is ready for display (within 15ms of audio clock)
+          if (delta <= 0.020 || Math.abs(delta) > 2.0) {
+            // Frame is ready for display (within 20ms of audio clock, or skew resynced)
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,
