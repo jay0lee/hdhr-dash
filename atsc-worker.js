@@ -191,26 +191,32 @@ function processSegment() {
   const yuvName = 'seg_' + segmentIndex + '.yuv';
   const pcmName = 'seg_' + segmentIndex + '.pcm';
 
+  let yuv = null;
+  let pcm = null;
+
   try {
-    core.FS.writeFile(inName, merged);
+    try {
+      core.FS.writeFile(inName, merged);
 
-    runFFmpeg([
-      '-i', inName,
-      '-vsync', '0',
-      '-f', 'rawvideo',
-      '-pix_fmt', 'yuv420p',
-      yuvName,
-      '-f', 'f32le',
-      '-ac', '2',
-      '-ar', '48000',
-      pcmName
-    ]);
+      runFFmpeg([
+        '-i', inName,
+        '-vsync', '0',
+        '-f', 'rawvideo',
+        '-pix_fmt', 'yuv420p',
+        yuvName,
+        '-f', 'f32le',
+        '-ac', '2',
+        '-ar', '48000',
+        pcmName
+      ]);
 
-    let yuv = null;
-    let pcm = null;
-    try { yuv = core.FS.readFile(yuvName); core.FS.unlink(yuvName); } catch (e) {}
-    try { pcm = core.FS.readFile(pcmName); core.FS.unlink(pcmName); } catch (e) {}
-    try { core.FS.unlink(inName); } catch (e) {}
+      try { yuv = core.FS.readFile(yuvName); } catch (e) {}
+      try { pcm = core.FS.readFile(pcmName); } catch (e) {}
+    } finally {
+      try { core.FS.unlink(yuvName); } catch (e) {}
+      try { core.FS.unlink(pcmName); } catch (e) {}
+      try { core.FS.unlink(inName); } catch (e) {}
+    }
 
     if (streamVideoPts === null) {
       streamVideoPts = 0;

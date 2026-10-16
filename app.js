@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.88';
+const APP_VERSION = '2.0.89';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4826,6 +4826,8 @@ const playerState = {
   sync: null,
   lastStatsTime: 0,
   lastStatsBytes: 0,
+  tunerPollTimer: null,
+  tunerStatus: null,
 };
 
 let playerElements = null;
@@ -4864,6 +4866,10 @@ function getPlayerElements() {
       hudLatency: document.getElementById('hud-latency'),
       hudSync: document.getElementById('hud-sync'),
       hudBitrate: document.getElementById('hud-bitrate'),
+      hudTuner: document.getElementById('hud-tuner'),
+      hudSignalStrength: document.getElementById('hud-signal-strength'),
+      hudSignalQuality: document.getElementById('hud-signal-quality'),
+      hudSymbolQuality: document.getElementById('hud-symbol-quality'),
     };
   }
   return playerElements;
@@ -4964,14 +4970,98 @@ function stopPlayerStream() {
   }
   playerState.streamReader = null;
   playerState.isPlaying = false;
+  stopTunerStatusPolling();
   const el = getPlayerElements();
   if (el.btnPlayPause) el.btnPlayPause.textContent = '▶';
+  if (el.hudTuner) el.hudTuner.textContent = '—';
+  if (el.hudSignalStrength) {
+    el.hudSignalStrength.textContent = '—';
+    el.hudSignalStrength.style.color = '';
+  }
+  if (el.hudSignalQuality) {
+    el.hudSignalQuality.textContent = '—';
+    el.hudSignalQuality.style.color = '';
+  }
+  if (el.hudSymbolQuality) {
+    el.hudSymbolQuality.textContent = '—';
+    el.hudSymbolQuality.style.color = '';
+  }
+}
+
+function stopTunerStatusPolling() {
+  if (playerState.tunerPollTimer) {
+    clearInterval(playerState.tunerPollTimer);
+    playerState.tunerPollTimer = null;
+  }
+  playerState.tunerStatus = null;
+}
+
+function startTunerStatusPolling() {
+  stopTunerStatusPolling();
+  if (!state.currentIp) return;
+
+  async function poll() {
+    if (!playerState.isOpen || !playerState.isPlaying || !state.currentIp) return;
+    try {
+      const res = await fetch(`http://${state.currentIp}/status.json`);
+      if (!res.ok) return;
+      const tuners = await res.json();
+      if (!Array.isArray(tuners)) return;
+
+      const chNum = playerState.channel ? playerState.channel.number : null;
+      let activeTuner = null;
+      if (chNum) {
+        activeTuner = tuners.find((t) => t.VctNumber === chNum);
+        if (!activeTuner) {
+          activeTuner = tuners.find(
+            (t) => t.VctNumber && t.VctNumber.replace(/^0+/, '') === chNum.replace(/^0+/, '')
+          );
+        }
+      }
+      if (!activeTuner) {
+        activeTuner = tuners.find((t) => t.SignalStrengthPercent > 0 || (t.TargetIP && t.TargetIP !== 'none'));
+      }
+
+      if (activeTuner) {
+        playerState.tunerStatus = activeTuner;
+        const el = getPlayerElements();
+        if (el.hudTuner) {
+          const tName = activeTuner.Resource ? activeTuner.Resource.toUpperCase() : 'TUNER';
+          el.hudTuner.textContent = tName;
+        }
+        if (el.hudSignalStrength && activeTuner.SignalStrengthPercent !== undefined) {
+          const ss = activeTuner.SignalStrengthPercent;
+          el.hudSignalStrength.textContent = `${ss}%`;
+          el.hudSignalStrength.style.color =
+            ss >= 70 ? 'var(--color-success, #22c55e)' : (ss >= 50 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
+        }
+        if (el.hudSignalQuality && activeTuner.SignalQualityPercent !== undefined) {
+          const snq = activeTuner.SignalQualityPercent;
+          el.hudSignalQuality.textContent = `${snq}%`;
+          el.hudSignalQuality.style.color =
+            snq >= 70 ? 'var(--color-success, #22c55e)' : (snq >= 50 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
+        }
+        if (el.hudSymbolQuality && activeTuner.SymbolQualityPercent !== undefined) {
+          const seq = activeTuner.SymbolQualityPercent;
+          el.hudSymbolQuality.textContent = `${seq}%`;
+          el.hudSymbolQuality.style.color =
+            seq === 100 ? 'var(--color-success, #22c55e)' : (seq >= 90 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
+        }
+      }
+    } catch (e) {
+      // Ignore network polling glitches during playback
+    }
+  }
+
+  poll();
+  playerState.tunerPollTimer = setInterval(poll, 2000);
 }
 
 async function startPlayerStream(streamUrl) {
   stopPlayerStream();
 
   playerState.isPlaying = true;
+  startTunerStatusPolling();
 
   const el = getPlayerElements();
   if (el.btnPlayPause) el.btnPlayPause.textContent = '⏸';
