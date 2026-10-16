@@ -24,6 +24,43 @@ let videoWidth = 1920;
 let videoHeight = 1080;
 let isInterlaced = true;
 
+// Cached TS stream header packets (PAT, PMT, Sequence Header = 564 bytes)
+// Prepending this to every segment allows FFmpeg to decode any segment independently
+let savedPatPkt = null;
+let savedPmtPkt = null;
+let savedSeqPkt = null;
+let savedHeader = null;
+
+function updateHeader(chunk) {
+  if (savedHeader) return;
+  for (let i = 0; i + 188 <= chunk.length; i += 188) {
+    if (chunk[i] !== 0x47) continue;
+    const pid = ((chunk[i + 1] & 0x1f) << 8) | chunk[i + 2];
+    if (pid === 0 && !savedPatPkt) {
+      savedPatPkt = chunk.slice(i, i + 188);
+    } else if (pid !== 0 && pid !== 0x1fff && !savedPmtPkt) {
+      if (demuxer && (pid === demuxer.pmtPid || demuxer.pmtPids.has(pid))) {
+        savedPmtPkt = chunk.slice(i, i + 188);
+      }
+    }
+    if (!savedSeqPkt) {
+      for (let j = i; j < i + 184; j++) {
+        if (chunk[j] === 0 && chunk[j + 1] === 0 && chunk[j + 2] === 1 && chunk[j + 3] === 0xb3) {
+          savedSeqPkt = chunk.slice(i, i + 188);
+          break;
+        }
+      }
+    }
+    if (savedPatPkt && savedPmtPkt && savedSeqPkt) {
+      savedHeader = new Uint8Array(188 * 3);
+      savedHeader.set(savedPatPkt, 0);
+      savedHeader.set(savedPmtPkt, 188);
+      savedHeader.set(savedSeqPkt, 376);
+      break;
+    }
+  }
+}
+
 // Helper to run FFmpeg CLI commands in WebAssembly
 const textEncoder = new TextEncoder();
 function runFFmpeg(args) {
@@ -94,8 +131,12 @@ async function initCore() {
 function processSegment() {
   if (!core || streamBufferBytes === 0) return;
 
-  const merged = new Uint8Array(streamBufferBytes);
-  let offset = 0;
+  const headerLen = savedHeader ? savedHeader.length : 0;
+  const merged = new Uint8Array(headerLen + streamBufferBytes);
+  if (savedHeader) {
+    merged.set(savedHeader, 0);
+  }
+  let offset = headerLen;
   for (let i = 0; i < streamBuffer.length; i++) {
     merged.set(streamBuffer[i], offset);
     offset += streamBuffer[i].length;
@@ -128,6 +169,8 @@ function processSegment() {
     try { pcm = core.FS.readFile(pcmName); core.FS.unlink(pcmName); } catch (e) {}
     try { core.FS.unlink(inName); } catch (e) {}
 
+    const basePts = streamPts;
+
     // 1. Process and transfer decoded YUV420P video frames
     if (yuv && yuv.length > 0) {
       const frameBytes = videoWidth * videoHeight * 1.5;
@@ -135,7 +178,7 @@ function processSegment() {
       const yPlaneSize = videoWidth * videoHeight;
       const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
 
-      let curPts = streamPts;
+      let curVideoPts = basePts;
 
       for (let f = 0; f < numFrames; f++) {
         const frameOffset = f * frameBytes;
@@ -151,7 +194,7 @@ function processSegment() {
         self.postMessage(
           {
             type: 'VIDEO_FRAME',
-            pts: curPts,
+            pts: curVideoPts,
             width: videoWidth,
             height: videoHeight,
             isInterlaced,
@@ -162,12 +205,9 @@ function processSegment() {
           [yBuf, uBuf, vBuf]
         );
 
-        if (curPts !== null) {
-          curPts += 1 / 29.97;
+        if (curVideoPts !== null) {
+          curVideoPts += 1 / 29.97;
         }
-      }
-      if (curPts !== null) {
-        streamPts = curPts;
       }
     }
 
@@ -177,7 +217,7 @@ function processSegment() {
       const totalStereoSamples = Math.floor(f32.length / 2);
       const SAMPLES_PER_CHUNK = 1536; // 32ms syncframe equivalent
 
-      let curAudioPts = streamPts;
+      let curAudioPts = basePts;
 
       for (let s = 0; s < totalStereoSamples; s += SAMPLES_PER_CHUNK) {
         const chunkLen = Math.min(SAMPLES_PER_CHUNK, totalStereoSamples - s);
@@ -205,6 +245,13 @@ function processSegment() {
           curAudioPts += chunkLen / 48000;
         }
       }
+    }
+
+    // Advance master stream PTS by the maximum decoded media duration in this segment
+    if (basePts !== null) {
+      const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) / 29.97;
+      const audDur = (pcm ? Math.floor(pcm.length / 8) : 0) / 48000;
+      streamPts = basePts + Math.max(vidDur, audDur);
     }
   } catch (err) {
     self.postMessage({ type: 'WORKER_LOG', text: 'SEGMENT_ERROR: ' + err.message + ' | ' + (err.stack || '') });
@@ -259,6 +306,10 @@ function stopPipeline() {
   streamBuffer = [];
   streamBufferBytes = 0;
   streamPts = null;
+  savedPatPkt = null;
+  savedPmtPkt = null;
+  savedSeqPkt = null;
+  savedHeader = null;
 }
 
 self.onmessage = function (e) {
@@ -278,12 +329,13 @@ self.onmessage = function (e) {
       if (msg.chunk) {
         const uint8 = new Uint8Array(msg.chunk);
         demuxer.push(uint8);
+        updateHeader(uint8);
 
         streamBuffer.push(uint8);
         streamBufferBytes += uint8.length;
 
-        // Trigger decode segment every ~300KB (~0.5s of ATSC 1.0 broadcast stream)
-        if (streamBufferBytes >= 300000 && core) {
+        // Trigger decode segment every ~300KB once header is captured, or after 1.2MB initial buffer
+        if (core && streamBufferBytes >= 300000 && (savedHeader || streamBufferBytes >= 1200000)) {
           processSegment();
         }
       }

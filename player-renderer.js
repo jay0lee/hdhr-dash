@@ -543,14 +543,14 @@
             }
           }
 
-          if (delta < -0.060 && Math.abs(delta) <= 2.0) {
-            // Video is > 60ms behind master audio clock: drop frame to catch up!
+          if (delta < -0.200 && Math.abs(delta) <= 2.0) {
+            // Video is > 200ms behind master audio clock: drop frame to catch up!
             this.videoQueue.shift();
             this.droppedFrames++;
             continue;
           }
 
-          if (delta <= 0.020 || Math.abs(delta) > 2.0) {
+          if (delta <= 0.040 || Math.abs(delta) > 2.0) {
             // Frame is ready for display (within 20ms of audio clock, or skew resynced)
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
