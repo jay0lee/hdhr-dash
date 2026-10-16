@@ -3,7 +3,7 @@
 [![GitHub Pages](https://img.shields.io/badge/Hosted%20On-GitHub%20Pages-blue?logo=github)](https://jay0lee.github.io/hdhr-dash/)
 [![PWA Ready](https://img.shields.io/badge/PWA-Installable-success?logo=pwa)](https://jay0lee.github.io/hdhr-dash/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Version: v2.0.77](https://img.shields.io/badge/Version-v2.0.77-brightgreen.svg)](https://github.com/jay0lee/hdhr-dash/releases)
+[![Version: v2.0.78](https://img.shields.io/badge/Version-v2.0.78-brightgreen.svg)](https://github.com/jay0lee/hdhr-dash/releases)
 
 A modern, fast, and responsive web dashboard and **Progressive Web App (PWA)** for [SiliconDust HDHomeRun](https://www.silicondust.com/) network tuners and DVR recording engines. 
 

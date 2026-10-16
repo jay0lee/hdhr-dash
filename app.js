@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.77';
+const APP_VERSION = '2.0.78';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -5047,25 +5047,8 @@ async function startPlayerStream(streamUrl) {
     });
   }
 
-  // Determine streaming URL (use local streaming proxy when served over HTTPS to avoid Mixed Content blocks)
-  let fetchUrl = streamUrl;
-  if (window.location.protocol === 'https:' && streamUrl.startsWith('http:')) {
-    fetchUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
-  }
-
   try {
-    let res = null;
-    try {
-      res = await fetch(fetchUrl, { signal });
-    } catch (fetchErr) {
-      if (fetchUrl === streamUrl && streamUrl.startsWith('http:')) {
-        console.warn('Direct stream fetch failed, falling back to local proxy...');
-        const proxyUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
-        res = await fetch(proxyUrl, { signal });
-      } else {
-        throw fetchErr;
-      }
-    }
+    const res = await fetch(streamUrl, { signal });
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
