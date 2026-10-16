@@ -5002,7 +5002,11 @@ async function startPlayerStream(streamUrl) {
     playerState.sync.start();
   }
 
-  // 1. Primary path: Offload stream ingestion, demuxing, and decoding to Web Worker
+  playerState.abortController = new AbortController();
+  const signal = playerState.abortController.signal;
+
+  // 1. Initialize Web Worker for background demuxing and decoding
+  let useWorker = false;
   if (typeof Worker !== 'undefined') {
     try {
       playerState.worker = new Worker('atsc-worker.js');
@@ -5094,129 +5098,140 @@ async function startPlayerStream(streamUrl) {
 
           case 'ERROR':
             console.warn('Worker reported stream error:', msg.message);
-            if (el.loadingText) {
-              el.loadingText.textContent = `Stream error: ${msg.message}`;
-            }
-            break;
-
-          case 'STREAM_ENDED':
-            if (playerState.isPlaying) {
-              stopPlayerStream();
-            }
             break;
         }
       };
 
       playerState.worker.onerror = function (err) {
         console.error('Player worker error:', err);
-        if (el.loadingText) {
-          el.loadingText.textContent = `Worker error: ${err.message || 'Worker failure'}`;
-        }
       };
 
-      playerState.worker.postMessage({ type: 'START', streamUrl });
-      return;
+      playerState.worker.postMessage({ type: 'INIT' });
+      useWorker = true;
     } catch (workerErr) {
       console.warn('Web Worker creation failed, using main-thread fallback:', workerErr);
     }
   }
 
-  // 2. Fallback path: Ingest on main thread
-  startPlayerStreamFallback(streamUrl);
-}
-
-async function startPlayerStreamFallback(streamUrl) {
-  playerState.abortController = new AbortController();
-  const signal = playerState.abortController.signal;
-  const el = getPlayerElements();
-
-  let videoDecoder = null;
-  let audioDecoder = null;
-  if (typeof MPEG2VideoDecoder !== 'undefined') {
-    videoDecoder = new MPEG2VideoDecoder({
-      onFrame: (frame) => {
-        if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
-          el.loadingOverlay.classList.add('fade-out');
-        }
-        if (el.hudResolution && frame.width && frame.height) {
-          el.hudResolution.textContent = `${frame.width}x${frame.height}`;
-        }
-        if (playerState.sync) {
-          playerState.sync.queueVideoFrame(frame);
-        }
-      },
-    });
-  }
-  if (typeof AC3AudioDecoder !== 'undefined') {
-    audioDecoder = new AC3AudioDecoder({
-      onAudio: (audio) => {
-        if (playerState.audioPlayer) {
-          playerState.audioPlayer.queueAudio(audio.left, audio.right, audio.pts, audio.sampleRate);
-        }
-      },
-    });
-  }
-
-  if (typeof ATSCDemuxer !== 'undefined') {
-    playerState.demuxer = new ATSCDemuxer({
-      onPAT: () => {
-        if (el.loadingText) el.loadingText.textContent = 'Found Program (PAT)...';
-      },
-      onPMT: () => {
-        if (el.loadingText) el.loadingText.textContent = 'Found Stream Map (PMT)...';
-        if (el.hudVideoCodec && playerState.demuxer.videoStreamType) {
-          el.hudVideoCodec.textContent =
-            playerState.demuxer.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
-        }
-        if (el.hudAudioCodec && playerState.demuxer.audioStreamType) {
-          el.hudAudioCodec.textContent =
-            playerState.demuxer.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
-        }
-      },
-      onVideoData: ({ pts, data }) => {
-        if (videoDecoder) videoDecoder.decodePES(data, pts);
-      },
-      onAudioData: ({ pts, data }) => {
-        if (audioDecoder) audioDecoder.decodePES(data, pts);
-      },
-      onStats: (stats) => {
-        const now = performance.now();
-        const dt = (now - playerState.lastStatsTime) / 1000.0;
-        if (dt >= 0.5) {
-          const dBytes = stats.bytesParsed - playerState.lastStatsBytes;
-          const mbps = (dBytes * 8) / (dt * 1000000);
-          playerState.lastStatsTime = now;
-          playerState.lastStatsBytes = stats.bytesParsed;
-          if (el.hudBitrate) el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
-          if (el.hudDropped) el.hudDropped.textContent = stats.packetsDropped.toString();
-          if (el.hudSync) {
-            const sign = stats.avSkewMs >= 0 ? '+' : '';
-            el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
+  // 2. Main-thread decoder fallback if Worker unavailable
+  if (!useWorker) {
+    let videoDecoder = null;
+    let audioDecoder = null;
+    if (typeof MPEG2VideoDecoder !== 'undefined') {
+      videoDecoder = new MPEG2VideoDecoder({
+        onFrame: (frame) => {
+          if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
+            el.loadingOverlay.classList.add('fade-out');
           }
-        }
-      },
-      onError: (err) => console.warn('Demuxer error:', err),
-    });
+          if (el.hudResolution && frame.width && frame.height) {
+            el.hudResolution.textContent = `${frame.width}x${frame.height}`;
+          }
+          if (playerState.sync) {
+            playerState.sync.queueVideoFrame(frame);
+          }
+        },
+      });
+    }
+    if (typeof AC3AudioDecoder !== 'undefined') {
+      audioDecoder = new AC3AudioDecoder({
+        onAudio: (audio) => {
+          if (playerState.audioPlayer) {
+            playerState.audioPlayer.queueAudio(audio.left, audio.right, audio.pts, audio.sampleRate);
+          }
+        },
+      });
+    }
+
+    if (typeof ATSCDemuxer !== 'undefined') {
+      playerState.demuxer = new ATSCDemuxer({
+        onPAT: () => {
+          if (el.loadingText) el.loadingText.textContent = 'Found Program (PAT)...';
+        },
+        onPMT: () => {
+          if (el.loadingText) el.loadingText.textContent = 'Found Stream Map (PMT)...';
+          if (el.hudVideoCodec && playerState.demuxer.videoStreamType) {
+            el.hudVideoCodec.textContent =
+              playerState.demuxer.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
+          }
+          if (el.hudAudioCodec && playerState.demuxer.audioStreamType) {
+            el.hudAudioCodec.textContent =
+              playerState.demuxer.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
+          }
+        },
+        onVideoData: ({ pts, data }) => {
+          if (videoDecoder) videoDecoder.decodePES(data, pts);
+        },
+        onAudioData: ({ pts, data }) => {
+          if (audioDecoder) audioDecoder.decodePES(data, pts);
+        },
+        onStats: (stats) => {
+          const now = performance.now();
+          const dt = (now - playerState.lastStatsTime) / 1000.0;
+          if (dt >= 0.5) {
+            const dBytes = stats.bytesParsed - playerState.lastStatsBytes;
+            const mbps = (dBytes * 8) / (dt * 1000000);
+            playerState.lastStatsTime = now;
+            playerState.lastStatsBytes = stats.bytesParsed;
+            if (el.hudBitrate) el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
+            if (el.hudDropped) el.hudDropped.textContent = stats.packetsDropped.toString();
+            if (el.hudSync) {
+              const sign = stats.avSkewMs >= 0 ? '+' : '';
+              el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
+            }
+          }
+        },
+        onError: (err) => console.warn('Demuxer error:', err),
+      });
+    }
   }
 
+  // 3. Network ingestion on Main Thread (inherits document permissions and private network access)
   try {
     const res = await fetch(streamUrl, { signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
     const reader = res.body.getReader();
     playerState.streamReader = reader;
+
     while (playerState.isPlaying && playerState.isOpen) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value && value.byteLength > 0 && playerState.demuxer) {
-        playerState.demuxer.push(value);
+
+      if (value && value.byteLength > 0) {
+        if (playerState.worker) {
+          let chunkBuf;
+          if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
+            chunkBuf = value.buffer;
+          } else {
+            chunkBuf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+          }
+          playerState.worker.postMessage({ type: 'CHUNK', chunk: chunkBuf }, [chunkBuf]);
+        } else if (playerState.demuxer) {
+          playerState.demuxer.push(value);
+        }
       }
     }
   } catch (err) {
     if (signal.aborted) return;
     console.error('Player streaming error:', err);
-    if (el.loadingText) el.loadingText.textContent = `Streaming error: ${err.message || err}`;
+    if (el.loadingText) {
+      if (window.location.protocol === 'https:' && streamUrl.startsWith('http:')) {
+        el.loadingText.innerHTML = `Mixed content blocked by browser.<br/><span style="font-size: 0.8rem; opacity: 0.85;">In Chrome, click the tune/settings icon in the URL bar → <strong>Site settings</strong> → set <strong>Insecure content</strong> to <strong>Allow</strong>.</span>`;
+      } else {
+        el.loadingText.textContent = `Streaming error: ${err.message || err}`;
+      }
+    }
+    if (el.loadingOverlay) {
+      el.loadingOverlay.classList.remove('fade-out');
+    }
   } finally {
-    if (playerState.demuxer) playerState.demuxer.flush();
+    if (playerState.worker) {
+      playerState.worker.postMessage({ type: 'FLUSH' });
+    } else if (playerState.demuxer) {
+      playerState.demuxer.flush();
+    }
   }
 }
 

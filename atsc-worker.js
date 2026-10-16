@@ -1,9 +1,12 @@
 /**
  * HDHR Dash — ATSC 1.0 Dedicated Web Worker (atsc-worker.js)
- * Isolates stream ingestion, MPEG-TS demuxing, and software decoding off the main thread.
+ * Isolates MPEG-TS demuxing and software decoding off the main thread.
  *
- * Transfers decoded planar YUV420P video frames and stereo Float32 PCM audio chunks
- * to the main thread using zero-copy Transferable ArrayBuffers.
+ * Receives raw stream chunks from the main thread (which performs the network fetch),
+ * and transfers decoded planar YUV420P video frames and stereo Float32 PCM audio chunks
+ * back to the main thread using zero-copy Transferable ArrayBuffers.
+ *
+ * 100% royalty-free open-source implementation.
  */
 
 /* global importScripts, ATSCDemuxer, MPEG2VideoDecoder, AC3AudioDecoder */
@@ -13,10 +16,10 @@ self.importScripts('atsc-demuxer.js', 'atsc-decoder.js');
 let demuxer = null;
 let videoDecoder = null;
 let audioDecoder = null;
-let abortController = null;
-let isRunning = false;
 
 function initPipeline() {
+  stopPipeline();
+
   videoDecoder = new MPEG2VideoDecoder({
     onFrame: (frame) => {
       // Transfer Y, U, and V ArrayBuffers with zero-copy to main thread
@@ -92,48 +95,7 @@ function initPipeline() {
   });
 }
 
-async function startStream(streamUrl) {
-  stopStream();
-  initPipeline();
-
-  isRunning = true;
-  abortController = new AbortController();
-  const signal = abortController.signal;
-
-  try {
-    const res = await fetch(streamUrl, { signal });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-
-    const reader = res.body.getReader();
-
-    while (isRunning) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value && value.byteLength > 0 && demuxer) {
-        demuxer.push(value);
-      }
-    }
-  } catch (err) {
-    if (signal.aborted) return;
-    self.postMessage({ type: 'ERROR', message: err.message || String(err) });
-  } finally {
-    if (demuxer) {
-      demuxer.flush();
-    }
-    self.postMessage({ type: 'STREAM_ENDED' });
-  }
-}
-
-function stopStream() {
-  isRunning = false;
-  if (abortController) {
-    try {
-      abortController.abort();
-    } catch (e) {}
-    abortController = null;
-  }
+function stopPipeline() {
   if (demuxer) {
     try {
       demuxer.flush();
@@ -149,18 +111,28 @@ self.onmessage = function (e) {
   if (!msg) return;
 
   switch (msg.type) {
+    case 'INIT':
     case 'START':
-      startStream(msg.streamUrl);
+      initPipeline();
       break;
 
     case 'CHUNK':
-      if (demuxer && msg.chunk) {
+      if (!demuxer) {
+        initPipeline();
+      }
+      if (msg.chunk) {
         demuxer.push(new Uint8Array(msg.chunk));
       }
       break;
 
+    case 'FLUSH':
+      if (demuxer) {
+        demuxer.flush();
+      }
+      break;
+
     case 'STOP':
-      stopStream();
+      stopPipeline();
       break;
   }
 };
