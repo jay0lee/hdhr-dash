@@ -86,6 +86,7 @@ function updateHeader(chunk) {
 }
 
 function findGOPBoundaryPacket(chunk, videoPid) {
+  const targetPid = (demuxer && demuxer.videoPid !== null) ? demuxer.videoPid : videoPid;
   const len = chunk.length;
   for (let i = 0; i + 188 <= len; i++) {
     if (chunk[i] !== 0x47) continue;
@@ -101,8 +102,12 @@ function findGOPBoundaryPacket(chunk, videoPid) {
     const pusi = (chunk[i + 1] & 0x40) !== 0;
     const pid = ((chunk[i + 1] & 0x1f) << 8) | chunk[i + 2];
 
-    const isVideo = (videoPid !== null && pid === videoPid) ||
-                    (demuxer && demuxer.videoPid !== null && (pid === demuxer.videoPid || demuxer.videoPids.has(pid)));
+    // If target video PID is known, strictly ignore other PIDs (prevent subchannel pollution)
+    if (targetPid !== null && pid !== targetPid) {
+      continue;
+    }
+
+    const isVideo = targetPid !== null && pid === targetPid;
 
     if (pusi) {
       const afc = (chunk[i + 3] >> 4) & 0x03;
@@ -126,7 +131,8 @@ function findGOPBoundaryPacket(chunk, videoPid) {
           for (let j = payloadOffset; j + 3 < i + 188; j++) {
             if (chunk[j] === 0 && chunk[j + 1] === 0 && chunk[j + 2] === 1) {
               const code = chunk[j + 3];
-              if (code === 0xb3 || code === 0xb8) {
+              // 0xb3 = Sequence Header (the ONLY true independent entry point of an MPEG-2 GOP)
+              if (code === 0xb3) {
                 return i; // Exact 188-byte packet boundary
               }
             }

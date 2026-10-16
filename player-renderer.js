@@ -370,16 +370,25 @@
         this.context.resume().catch(() => {});
       }
 
-      // Target jitter cushion: 1.8s of audio pre-buffering to absorb broadcast 2.0s GOP variance (CBS/1080i)
-      const TARGET_CUSHION = 1.800;
+      // Target jitter cushion: 350ms initial pre-buffering provides near-instant tuning
+      // while absorbing network packet arrival variance
+      const INITIAL_CUSHION = 0.350;
 
       let startTime = this.nextPlayTime;
+      const isInitial = this.scheduledChunks.length === 0;
       const isUnderflow = !startTime || startTime < curTime;
-      const isOverAccumulated = startTime > curTime + 5.0;
+      const isOverAccumulated = startTime > curTime + 4.0;
 
-      if (isUnderflow || isOverAccumulated || this.scheduledChunks.length === 0) {
-        // Buffer underflow or initial frame: schedule TARGET_CUSHION ahead
-        startTime = curTime + TARGET_CUSHION;
+      if (isInitial) {
+        // Instant tuning startup
+        startTime = curTime + INITIAL_CUSHION;
+      } else if (isUnderflow) {
+        // Fast underflow recovery: resume playback immediately with a tiny 40ms safety margin
+        // Do NOT insert a massive 1.8s silence freeze
+        startTime = curTime + 0.040;
+      } else if (isOverAccumulated) {
+        // Clamp excessive queue accumulation if worker raced ahead
+        startTime = curTime + 0.800;
       }
 
       this.nextPlayTime = startTime + duration;
@@ -522,6 +531,8 @@
     }
 
     start() {
+      this.renderedFrames = 0;
+      this.droppedFrames = 0;
       if (this.isRunning) return;
       this.isRunning = true;
       this.lastFpsUpdate = performance.now();
@@ -552,8 +563,8 @@
 
     queueVideoFrame(frame) {
       this.videoQueue.push(frame);
-      // Keep queue bounded to prevent memory growth if audio is delayed (240 frames = 4s at 60fps / 8s at 30fps)
-      if (this.videoQueue.length > 240) {
+      // Keep queue bounded to prevent memory growth (480 frames = 8s at 60fps / 16s at 30fps)
+      if (this.videoQueue.length > 480) {
         this.videoQueue.shift();
         this.droppedFrames++;
       }

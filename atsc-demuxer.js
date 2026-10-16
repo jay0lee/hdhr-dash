@@ -275,7 +275,7 @@
       if (pid === 0x0000) {
         this.parsePAT(payload, pusi);
       } else if (this.pmtPids.has(pid) || (this.pmtPid !== null && pid === this.pmtPid)) {
-        this.parsePMT(payload, pusi);
+        this.parsePMT(pid, payload, pusi);
       } else if (
         this.videoPids.has(pid) ||
         this.audioPids.has(pid) ||
@@ -284,24 +284,24 @@
       ) {
         this.parsePES(pid, payload, pusi);
       } else if (pusi && payload.length >= 4 && payload[0] === 0x00 && payload[1] === 0x00 && payload[2] === 0x01) {
-        // Opportunistic sniff of PES start code
+        // Opportunistic sniff of PES start code (only if primary PIDs not yet discovered)
         const sid = payload[3];
         if (sid >= 0xe0 && sid <= 0xef) {
           // Video stream (0xE0 - 0xEF)
-          this.videoPids.add(pid);
           if (this.videoPid === null) {
+            this.videoPids.add(pid);
             this.videoPid = pid;
             this.videoStreamType = 0x02;
+            this.parsePES(pid, payload, pusi);
           }
-          this.parsePES(pid, payload, pusi);
         } else if (sid === 0xbd || (sid >= 0xc0 && sid <= 0xdf)) {
           // Audio stream (0xBD = AC-3, 0xC0-0xDF = MPEG Audio)
-          this.audioPids.add(pid);
           if (this.audioPid === null) {
+            this.audioPids.add(pid);
             this.audioPid = pid;
             this.audioStreamType = sid === 0xbd ? 0x81 : 0x03;
+            this.parsePES(pid, payload, pusi);
           }
-          this.parsePES(pid, payload, pusi);
         }
       }
     }
@@ -328,11 +328,13 @@
         const progNum = (payload[i] << 8) | payload[i + 1];
         const progPid = ((payload[i + 2] & 0x1f) << 8) | payload[i + 3];
         if (progNum !== 0) {
-          // Found program map PID
+          // Found program map PID - lock onto the first program
           if (this.pmtPid === null) {
             this.pmtPid = progPid;
           }
-          this.pmtPids.add(progPid);
+          if (this.pmtPids.size === 0) {
+            this.pmtPids.add(progPid);
+          }
           programs.push({ programNumber: progNum, pmtPid: progPid });
         }
       }
@@ -346,7 +348,10 @@
     /**
      * Parse Program Map Table (PMT).
      */
-    parsePMT(payload, pusi) {
+    parsePMT(pid, payload, pusi) {
+      if (this.pmtPid !== null && pid !== this.pmtPid) {
+        return; // Ignore subchannel programs
+      }
       this.stats.pmtCount++;
       let offset = 0;
       if (pusi) {
@@ -383,8 +388,8 @@
         // 0x0F: AAC ADTS Audio
         if (streamType === 0x02 || streamType === 0x1b) {
           kind = 'video';
-          this.videoPids.add(elemPid);
           if (this.videoPid === null) {
+            this.videoPids.add(elemPid);
             this.videoPid = elemPid;
             this.videoStreamType = streamType;
           }
@@ -396,8 +401,8 @@
           streamType === 0x0f
         ) {
           kind = 'audio';
-          this.audioPids.add(elemPid);
           if (this.audioPid === null) {
+            this.audioPids.add(elemPid);
             this.audioPid = elemPid;
             this.audioStreamType = streamType;
           }
@@ -417,16 +422,16 @@
                 payload[dPos + 5] === 0x33    // '3'
               ) {
                 kind = 'audio';
-                this.audioPids.add(elemPid);
                 if (this.audioPid === null) {
+                  this.audioPids.add(elemPid);
                   this.audioPid = elemPid;
                   this.audioStreamType = 0x81;
                 }
               }
             } else if (tag === 0x6a || tag === 0x7a || tag === 0x81) {
               kind = 'audio';
-              this.audioPids.add(elemPid);
               if (this.audioPid === null) {
+                this.audioPids.add(elemPid);
                 this.audioPid = elemPid;
                 this.audioStreamType = 0x81;
               }
