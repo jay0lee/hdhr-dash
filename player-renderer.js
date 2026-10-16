@@ -547,25 +547,26 @@
             break;
           }
 
-          const delta = next.pts - masterPts;
+          let delta = next.pts - masterPts;
 
-          // If clock skew is greater than 2 seconds (e.g. rollover or stream start), resync audio master clock
-          if (Math.abs(delta) > 2.0) {
-            if (this.audio) {
+          // On first frame or if clock skew exceeds 0.5s, align audio master clock to video frame PTS
+          if (this.renderedFrames === 0 || Math.abs(delta) > 0.500) {
+            if (this.audio && this.audio.context) {
               this.audio.baseAudioPts = next.pts;
-              this.audio.baseContextTime = this.audio.context ? this.audio.context.currentTime : 0;
+              this.audio.baseContextTime = this.audio.context.currentTime;
+              delta = 0;
             }
           }
 
-          if (delta < -0.200 && Math.abs(delta) <= 2.0) {
-            // Video is > 200ms behind master audio clock: drop frame to catch up!
+          if (delta < -0.100 && this.videoQueue.length > 1) {
+            // Video frame is > 100ms late and newer frame is waiting: drop stale frame
             this.videoQueue.shift();
             this.droppedFrames++;
             continue;
           }
 
-          if (delta <= 0.015 || Math.abs(delta) > 2.0) {
-            // Frame is ready for display (within 15ms of audio clock, or skew resynced)
+          if (delta <= 0.015) {
+            // Frame is ready for display (within 15ms of audio clock)
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,

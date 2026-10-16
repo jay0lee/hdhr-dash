@@ -85,8 +85,11 @@ function updateHeader(chunk) {
 function hasSeqHeader(chunk) {
   const len = chunk.length - 4;
   for (let i = 0; i <= len; i++) {
-    if (chunk[i] === 0 && chunk[i + 1] === 0 && chunk[i + 2] === 1 && chunk[i + 3] === 0xb3) {
-      return true;
+    if (chunk[i] === 0 && chunk[i + 1] === 0 && chunk[i + 2] === 1) {
+      const code = chunk[i + 3];
+      if (code === 0xb3 || code === 0xb8) {
+        return true;
+      }
     }
   }
   return false;
@@ -382,7 +385,6 @@ self.onmessage = function (e) {
       }
       if (msg.chunk) {
         const uint8 = new Uint8Array(msg.chunk);
-        demuxer.push(uint8);
         updateHeader(uint8);
 
         const isGopBoundary = hasSeqHeader(uint8);
@@ -396,6 +398,8 @@ self.onmessage = function (e) {
           streamStarted = true;
         }
 
+        demuxer.push(uint8);
+
         // If a GOP boundary is reached and we already have at least 300KB,
         // process the preceding GOP as a segment!
         if (core && isGopBoundary && streamBufferBytes >= 300000) {
@@ -405,8 +409,8 @@ self.onmessage = function (e) {
         streamBuffer.push(uint8);
         streamBufferBytes += uint8.length;
 
-        // Fallback for streams without detected sequence headers: flush at 1.0MB
-        if (core && streamBufferBytes >= 1000000) {
+        // Fallback for streams without detected sequence headers: flush at 2.5MB
+        if (core && streamBufferBytes >= 2500000) {
           processSegment();
         }
       }
