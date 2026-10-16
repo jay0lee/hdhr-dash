@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.81';
+const APP_VERSION = '2.0.82';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -5009,7 +5009,7 @@ async function startPlayerStream(streamUrl) {
   let useWorker = false;
   if (typeof Worker !== 'undefined') {
     try {
-      playerState.worker = new Worker('atsc-worker.js');
+      playerState.worker = new Worker('atsc-worker.js?v=' + APP_VERSION);
 
       playerState.worker.onmessage = function (e) {
         const msg = e.data;
