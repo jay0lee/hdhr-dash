@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.83';
+const APP_VERSION = '2.0.84';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number

@@ -50,13 +50,6 @@
     uniform int u_deinterlaceMode;
     uniform float u_textureHeight;
 
-    // ITU-R BT.601 color matrix (standard for broadcast television)
-    const mat3 yuv2rgb = mat3(
-        1.16438,  0.00000,  1.59603,
-        1.16438, -0.39176, -0.81297,
-        1.16438,  2.01723,  0.00000
-    );
-
     void main() {
         vec2 coord = v_texCoord;
 
@@ -75,8 +68,23 @@
         float u = texture2D(u_textureU, coord).r - (128.0 / 255.0);
         float v = texture2D(u_textureV, coord).r - (128.0 / 255.0);
 
-        vec3 rgb = clamp(yuv2rgb * vec3(y, u, v), 0.0, 1.0);
-        gl_FragColor = vec4(rgb, 1.0);
+        // ATSC 1.0 HDTV (1080i / 720p) uses ITU-R BT.709; SDTV (480i) uses BT.601
+        float r;
+        float g;
+        float b;
+        if (u_textureHeight >= 700.0) {
+            // ITU-R BT.709 (HD)
+            r = 1.16438 * y + 1.79274 * v;
+            g = 1.16438 * y - 0.21325 * u - 0.53291 * v;
+            b = 1.16438 * y + 2.11240 * u;
+        } else {
+            // ITU-R BT.601 (SD)
+            r = 1.16438 * y + 1.59603 * v;
+            g = 1.16438 * y - 0.39176 * u - 0.81297 * v;
+            b = 1.16438 * y + 2.01723 * u;
+        }
+
+        gl_FragColor = vec4(clamp(vec3(r, g, b), 0.0, 1.0), 1.0);
     }
   `;
 
@@ -102,13 +110,15 @@
       this.videoHeight = 0;
       this.isContextLost = false;
 
+      this.preserveDrawingBuffer = options.preserveDrawingBuffer !== undefined ? options.preserveDrawingBuffer : false;
+
       this.initGL();
     }
 
     initGL() {
       const gl =
         this.canvas.getContext('webgl', {
-          preserveDrawingBuffer: false,
+          preserveDrawingBuffer: this.preserveDrawingBuffer,
           alpha: false,
           depth: false,
           stencil: false,
@@ -483,10 +493,16 @@
       if (this.isRunning) return;
       this.isRunning = true;
       this.lastFpsUpdate = performance.now();
+      this.lastRenderLoopTime = performance.now();
       this.framesThisSecond = 0;
       if (typeof requestAnimationFrame !== 'undefined') {
         this.animId = requestAnimationFrame(this.renderLoopBound);
       }
+      this.timerId = setInterval(() => {
+        if (this.isRunning && performance.now() - this.lastRenderLoopTime >= 30) {
+          this.renderLoop();
+        }
+      }, 25);
     }
 
     stop() {
@@ -494,6 +510,10 @@
       if (this.animId && typeof cancelAnimationFrame !== 'undefined') {
         cancelAnimationFrame(this.animId);
         this.animId = null;
+      }
+      if (this.timerId) {
+        clearInterval(this.timerId);
+        this.timerId = null;
       }
       this.videoQueue = [];
     }
@@ -509,6 +529,7 @@
 
     renderLoop(timestamp) {
       if (!this.isRunning) return;
+      this.lastRenderLoopTime = performance.now();
 
       const masterPts = this.audio ? this.audio.getMasterClockPts() : null;
 
