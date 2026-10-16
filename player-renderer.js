@@ -319,9 +319,8 @@
       this.gainNode = null;
       this.nextPlayTime = 0;
 
-      // Master clock reference
-      this.baseAudioPts = null;
-      this.baseContextTime = 0;
+      // Real-time presentation clock tracking per scheduled audio chunk
+      this.scheduledChunks = [];
 
       this.activeSources = new Set();
     }
@@ -371,28 +370,31 @@
         this.context.resume().catch(() => {});
       }
 
-      // Target jitter cushion: 800ms of audio pre-buffering to absorb segment decode variance
-      const TARGET_CUSHION = 0.800;
+      // Target jitter cushion: 1.8s of audio pre-buffering to absorb broadcast 2.0s GOP variance (CBS/1080i)
+      const TARGET_CUSHION = 1.800;
 
       let startTime = this.nextPlayTime;
       const isUnderflow = !startTime || startTime < curTime;
-      const isOverAccumulated = startTime > curTime + 2.5;
+      const isOverAccumulated = startTime > curTime + 5.0;
 
-      if (isUnderflow || isOverAccumulated || this.baseAudioPts === null) {
+      if (isUnderflow || isOverAccumulated || this.scheduledChunks.length === 0) {
         // Buffer underflow or initial frame: schedule TARGET_CUSHION ahead
         startTime = curTime + TARGET_CUSHION;
-        this.baseAudioPts = pts;
-        this.baseContextTime = startTime;
-      } else {
-        // Resync base clock on massive timestamp discontinuity (> 2.0s)
-        const expectedPts = this.baseAudioPts + (startTime - this.baseContextTime);
-        if (Math.abs(pts - expectedPts) > 2.0) {
-          this.baseAudioPts = pts;
-          this.baseContextTime = startTime;
-        }
       }
 
       this.nextPlayTime = startTime + duration;
+
+      // Track this chunk for precise presentation clock sync
+      this.scheduledChunks.push({
+        startTime,
+        duration,
+        pts
+      });
+
+      // Prune old chunks that finished playing > 0.5s ago
+      while (this.scheduledChunks.length > 1 && (this.scheduledChunks[0].startTime + this.scheduledChunks[0].duration) < curTime - 0.5) {
+        this.scheduledChunks.shift();
+      }
 
       const buffer = this.context.createBuffer(2, lArr.length, sampleRate);
       buffer.getChannelData(0).set(lArr);
@@ -410,25 +412,47 @@
     }
 
     /**
-     * Check if audio playback is currently starved (underflowed).
+     * Check if audio playback is currently starved (underflowed or in a buffer gap).
      */
     isStarved() {
-      return !this.context || !this.nextPlayTime || this.context.currentTime >= this.nextPlayTime;
+      if (!this.context || this.scheduledChunks.length === 0) return true;
+      const curTime = this.context.currentTime;
+      // If we are before the first scheduled chunk, we are in initial cushion
+      if (curTime < this.scheduledChunks[0].startTime) return false;
+      // Check if curTime falls within any currently playing chunk
+      for (let i = 0; i < this.scheduledChunks.length; i++) {
+        const c = this.scheduledChunks[i];
+        if (curTime >= c.startTime && curTime < c.startTime + c.duration) {
+          return false; // Actively emitting audio from speakers
+        }
+      }
+      return true; // No audio currently playing
     }
 
     /**
      * Current master clock time in presentation seconds.
+     * Evaluates against the audio chunk currently emitting from the output device.
      */
     getMasterClockPts() {
-      if (!this.context || this.baseAudioPts === null) return null;
+      if (!this.context || this.scheduledChunks.length === 0) return null;
       const curTime = this.context.currentTime;
-      // If audio has drained/starved, clamp clock to the end of scheduled audio to prevent clock runaway
-      if (this.nextPlayTime && curTime > this.nextPlayTime) {
-        const maxElapsed = this.nextPlayTime - this.baseContextTime;
-        return this.baseAudioPts + maxElapsed;
+
+      // Find the chunk currently playing at curTime
+      for (let i = this.scheduledChunks.length - 1; i >= 0; i--) {
+        const chunk = this.scheduledChunks[i];
+        if (curTime >= chunk.startTime) {
+          const elapsed = curTime - chunk.startTime;
+          // If audio has drained/starved past the end of all scheduled chunks, clamp to prevent clock runaway
+          if (i === this.scheduledChunks.length - 1 && elapsed > chunk.duration) {
+            return chunk.pts + chunk.duration;
+          }
+          return chunk.pts + Math.min(elapsed, chunk.duration);
+        }
       }
-      const elapsed = curTime - this.baseContextTime;
-      return this.baseAudioPts + elapsed;
+
+      // Initial cushion before first sample plays (curTime < first.startTime)
+      const first = this.scheduledChunks[0];
+      return first.pts - (first.startTime - curTime);
     }
 
     setVolume(vol) {
@@ -457,9 +481,8 @@
         } catch (e) {}
       }
       this.activeSources.clear();
+      this.scheduledChunks = [];
       this.nextPlayTime = 0;
-      this.baseAudioPts = null;
-      this.baseContextTime = 0;
     }
 
     destroy() {
@@ -529,8 +552,8 @@
 
     queueVideoFrame(frame) {
       this.videoQueue.push(frame);
-      // Keep queue bounded to prevent memory growth if audio is delayed (120 frames = ~4s)
-      if (this.videoQueue.length > 120) {
+      // Keep queue bounded to prevent memory growth if audio is delayed (240 frames = 4s at 60fps / 8s at 30fps)
+      if (this.videoQueue.length > 240) {
         this.videoQueue.shift();
         this.droppedFrames++;
       }
@@ -576,16 +599,16 @@
             break;
           }
 
-          // If frame is > 120ms late and a newer frame is waiting: drop stale frame to catch up
-          if (delta < -0.120 && this.videoQueue.length > 1) {
+          // If frame is > 600ms late and a newer frame is waiting: drop stale frame to catch up
+          if (delta < -0.600 && this.videoQueue.length > 1) {
             if (this.onFrameDrop) this.onFrameDrop(next.pts, masterPts, delta);
             this.videoQueue.shift();
             this.droppedFrames++;
             continue;
           }
 
-          // Frame is ready for display (within 35ms of master audio clock)
-          if (delta <= 0.035) {
+          // Frame is ready for display (within 40ms of master audio clock)
+          if (delta <= 0.040) {
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,

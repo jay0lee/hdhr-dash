@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.90';
+const APP_VERSION = '2.0.91';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4870,6 +4870,8 @@ function getPlayerElements() {
       hudSignalStrength: document.getElementById('hud-signal-strength'),
       hudSignalQuality: document.getElementById('hud-signal-quality'),
       hudSymbolQuality: document.getElementById('hud-symbol-quality'),
+      playerSignalPill: document.getElementById('player-signal-pill'),
+      playerSignalLabel: document.getElementById('player-signal-label'),
     };
   }
   return playerElements;
@@ -4986,6 +4988,13 @@ function stopPlayerStream() {
     el.hudSymbolQuality.textContent = '—';
     el.hudSymbolQuality.style.color = '';
   }
+  if (el.playerSignalPill) {
+    el.playerSignalPill.classList.add('hidden');
+    el.playerSignalPill.className = 'badge-signal hidden';
+  }
+  if (el.playerSignalLabel) {
+    el.playerSignalLabel.textContent = '—';
+  }
 }
 
 function stopTunerStatusPolling() {
@@ -5029,23 +5038,31 @@ function startTunerStatusPolling() {
           const tName = activeTuner.Resource ? activeTuner.Resource.toUpperCase() : 'TUNER';
           el.hudTuner.textContent = tName;
         }
+        const ss = activeTuner.SignalStrengthPercent ?? 0;
+        const snq = activeTuner.SignalQualityPercent ?? 0;
+        const seq = activeTuner.SymbolQualityPercent ?? 0;
+
         if (el.hudSignalStrength && activeTuner.SignalStrengthPercent !== undefined) {
-          const ss = activeTuner.SignalStrengthPercent;
           el.hudSignalStrength.textContent = `${ss}%`;
           el.hudSignalStrength.style.color =
             ss >= 70 ? 'var(--color-success, #22c55e)' : (ss >= 50 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
         }
         if (el.hudSignalQuality && activeTuner.SignalQualityPercent !== undefined) {
-          const snq = activeTuner.SignalQualityPercent;
           el.hudSignalQuality.textContent = `${snq}%`;
           el.hudSignalQuality.style.color =
             snq >= 70 ? 'var(--color-success, #22c55e)' : (snq >= 50 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
         }
         if (el.hudSymbolQuality && activeTuner.SymbolQualityPercent !== undefined) {
-          const seq = activeTuner.SymbolQualityPercent;
           el.hudSymbolQuality.textContent = `${seq}%`;
           el.hudSymbolQuality.style.color =
             seq === 100 ? 'var(--color-success, #22c55e)' : (seq >= 90 ? 'var(--color-warning, #eab308)' : 'var(--color-danger, #ef4444)');
+        }
+        if (el.playerSignalPill && el.playerSignalLabel) {
+          const rateMbps = activeTuner.NetworkRate ? (activeTuner.NetworkRate / 1000000).toFixed(1) : '0.0';
+          el.playerSignalLabel.textContent = `SS ${ss}% • SNQ ${snq}%`;
+          el.playerSignalPill.title = `Tuner Signal: Strength ${ss}% | Quality (SNQ) ${snq}% | Symbol (SEQ) ${seq}% | Net ${rateMbps} Mbps`;
+          el.playerSignalPill.className = 'badge-signal ' + (snq >= 70 ? 'good' : (snq >= 50 ? 'fair' : 'poor'));
+          el.playerSignalPill.classList.remove('hidden');
         }
       }
     } catch (e) {

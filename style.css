@@ -2961,6 +2961,38 @@ body {
   color: #ffffff;
 }
 
+.badge-signal {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: help;
+}
+
+.badge-signal.good {
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
+  background-color: rgba(34, 197, 94, 0.1);
+}
+
+.badge-signal.fair {
+  color: #eab308;
+  border-color: rgba(234, 179, 8, 0.3);
+  background-color: rgba(234, 179, 8, 0.1);
+}
+
+.badge-signal.poor {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.3);
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
 .player-volume-group {
   display: flex;
   align-items: center;

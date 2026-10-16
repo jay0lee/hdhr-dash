@@ -22,6 +22,9 @@ let segmentIndex = 0;
 let streamPts = null;
 let streamVideoPts = null;
 let streamAudioPts = null;
+let currentSegmentVideoPts = null;
+let currentSegmentAudioPts = null;
+let nextGopVideoPts = null;
 let videoFps = 29.97;
 let videoWidth = 1920;
 let videoHeight = 1080;
@@ -99,10 +102,9 @@ function findGOPBoundaryPacket(chunk, videoPid) {
     const pid = ((chunk[i + 1] & 0x1f) << 8) | chunk[i + 2];
 
     const isVideo = (videoPid !== null && pid === videoPid) ||
-                    (demuxer && (pid === demuxer.videoPid || demuxer.videoPids.has(pid))) ||
-                    (pid >= 0x20 && pid <= 0x1ffe);
+                    (demuxer && demuxer.videoPid !== null && (pid === demuxer.videoPid || demuxer.videoPids.has(pid)));
 
-    if (pusi && isVideo) {
+    if (pusi) {
       const afc = (chunk[i + 3] >> 4) & 0x03;
       if (afc === 2) continue; // AF only
       let payloadOffset = i + 4;
@@ -111,11 +113,22 @@ function findGOPBoundaryPacket(chunk, videoPid) {
       }
 
       if (payloadOffset + 4 <= i + 188) {
-        for (let j = payloadOffset; j + 3 < i + 188; j++) {
-          if (chunk[j] === 0 && chunk[j + 1] === 0 && chunk[j + 2] === 1) {
-            const code = chunk[j + 3];
-            if (code === 0xb3 || code === 0xb8) {
-              return i; // Exact 188-byte packet boundary
+        // Confirm video PES stream ID (0xE0 - 0xEF) if video PID not yet registered
+        const isPesVideo = isVideo || (
+          chunk[payloadOffset] === 0 &&
+          chunk[payloadOffset + 1] === 0 &&
+          chunk[payloadOffset + 2] === 1 &&
+          chunk[payloadOffset + 3] >= 0xe0 &&
+          chunk[payloadOffset + 3] <= 0xef
+        );
+
+        if (isPesVideo) {
+          for (let j = payloadOffset; j + 3 < i + 188; j++) {
+            if (chunk[j] === 0 && chunk[j + 1] === 0 && chunk[j + 2] === 1) {
+              const code = chunk[j + 3];
+              if (code === 0xb3 || code === 0xb8) {
+                return i; // Exact 188-byte packet boundary
+              }
             }
           }
         }
@@ -123,6 +136,37 @@ function findGOPBoundaryPacket(chunk, videoPid) {
     }
   }
   return -1;
+}
+
+function parseTimestamp(buf, offset) {
+  const b0 = buf[offset];
+  const b1 = buf[offset + 1];
+  const b2 = buf[offset + 2];
+  const b3 = buf[offset + 3];
+  const b4 = buf[offset + 4];
+  const high = (b0 & 0x0e) >> 1;
+  const part1 = (b1 << 7) | (b2 >> 1);
+  const part2 = (b3 << 7) | (b4 >> 1);
+  return ((high * 0x40000000) + (part1 * 0x8000) + part2) / 90000.0;
+}
+
+function extractPacketPts(chunk, pktOffset) {
+  if (pktOffset + 188 > chunk.length) return null;
+  const afc = (chunk[pktOffset + 3] >> 4) & 0x03;
+  if (afc === 2) return null; // Adaptation field only
+  let pOff = pktOffset + 4;
+  if (afc === 3) pOff += 1 + chunk[pktOffset + 4]; // Skip adaptation field
+  if (pOff + 14 <= pktOffset + 188 && chunk[pOff] === 0 && chunk[pOff + 1] === 0 && chunk[pOff + 2] === 1) {
+    const streamId = chunk[pOff + 3];
+    // Ensure this timestamp belongs to video (stream ID 0xE0 - 0xEF)
+    if (streamId >= 0xe0 && streamId <= 0xef) {
+      const flags2 = chunk[pOff + 7];
+      if (flags2 & 0x80) {
+        return parseTimestamp(chunk, pOff + 9);
+      }
+    }
+  }
+  return null;
 }
 
 // Helper to run FFmpeg CLI commands in WebAssembly
@@ -248,12 +292,22 @@ function processSegment() {
       try { core.FS.unlink(inName); } catch (e) {}
     }
 
-    if (streamVideoPts === null) {
-      streamVideoPts = (demuxer && demuxer.stats.lastVideoPts !== null) ? demuxer.stats.lastVideoPts : 0;
+    // Sync dynamic resolution and frame rate from demuxer elementary stream parsing
+    if (demuxer && demuxer.stats) {
+      if (demuxer.stats.videoWidth && demuxer.stats.videoHeight) {
+        videoWidth = demuxer.stats.videoWidth;
+        videoHeight = demuxer.stats.videoHeight;
+      }
+      if (demuxer.stats.videoFps && demuxer.stats.videoFps > 0) {
+        videoFps = demuxer.stats.videoFps;
+      }
     }
-    if (streamAudioPts === null) {
-      streamAudioPts = (demuxer && demuxer.stats.lastAudioPts !== null) ? demuxer.stats.lastAudioPts : streamVideoPts;
-    }
+
+    // Anchor segment to real hardware PTS from the GOP boundary
+    const segVideoStart = (currentSegmentVideoPts !== null) ? currentSegmentVideoPts : (streamVideoPts !== null ? streamVideoPts : 0);
+    const segAudioStart = segVideoStart;
+    currentSegmentVideoPts = null;
+    currentSegmentAudioPts = null;
 
     const frameDur = 1.0 / videoFps;
 
@@ -264,7 +318,7 @@ function processSegment() {
       const totalStereoSamples = Math.floor(f32.length / 2);
       const SAMPLES_PER_CHUNK = 9600; // 200ms audio chunk (seamless Web Audio playback)
 
-      let curAudioPts = streamAudioPts;
+      let curAudioPts = segAudioStart;
 
       for (let s = 0; s < totalStereoSamples; s += SAMPLES_PER_CHUNK) {
         const chunkLen = Math.min(SAMPLES_PER_CHUNK, totalStereoSamples - s);
@@ -300,7 +354,7 @@ function processSegment() {
       const yPlaneSize = videoWidth * videoHeight;
       const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
 
-      let curVideoPts = streamVideoPts;
+      let curVideoPts = segVideoStart;
 
       for (let f = 0; f < numFrames; f++) {
         const frameOffset = f * frameBytes;
@@ -365,18 +419,24 @@ function initPipeline() {
       if (stats.videoFps && stats.videoFps > 0) {
         videoFps = stats.videoFps;
       }
+      if (stats.videoWidth && stats.videoHeight) {
+        videoWidth = stats.videoWidth;
+        videoHeight = stats.videoHeight;
+      }
       stats.videoWidth = videoWidth;
       stats.videoHeight = videoHeight;
       self.postMessage({ type: 'STATS', stats });
     },
     onVideoData: ({ pts }) => {
-      if (pts !== null && streamVideoPts === null) {
-        streamVideoPts = pts;
+      if (pts !== null) {
+        if (currentSegmentVideoPts === null) currentSegmentVideoPts = pts;
+        if (streamVideoPts === null) streamVideoPts = pts;
       }
     },
     onAudioData: ({ pts }) => {
-      if (pts !== null && streamAudioPts === null) {
-        streamAudioPts = pts;
+      if (pts !== null) {
+        if (currentSegmentAudioPts === null) currentSegmentAudioPts = pts;
+        if (streamAudioPts === null) streamAudioPts = pts;
       }
     },
     onError: (err) => {
@@ -395,6 +455,9 @@ function stopPipeline() {
   streamPts = null;
   streamVideoPts = null;
   streamAudioPts = null;
+  currentSegmentVideoPts = null;
+  currentSegmentAudioPts = null;
+  nextGopVideoPts = null;
   videoFps = 29.97;
   savedPatPkt = null;
   savedPmtPkt = null;
@@ -432,10 +495,26 @@ self.onmessage = function (e) {
             return;
           }
           streamStarted = true;
+
+          // When the first clean GOP sequence header is found, discard partial packets before it
+          if (gopPktOffset > 0) {
+            discardedBytes += gopPktOffset;
+          }
+
+          // Start clean segment buffer at the Sequence Header
+          const head = uint8.subarray(gopPktOffset);
+          const detectedGopPts = extractPacketPts(uint8, gopPktOffset);
+          currentSegmentVideoPts = detectedGopPts !== null ? detectedGopPts : (demuxer ? demuxer.stats.lastVideoPts : null);
+          currentSegmentAudioPts = null;
+          streamBuffer.push(head);
+          streamBufferBytes += head.length;
+          demuxer.push(head);
+          return;
         }
 
         if (gopPktOffset !== -1) {
-          // A new GOP starts at gopPktOffset
+          const detectedGopPts = extractPacketPts(uint8, gopPktOffset);
+
           // 1. Everything before gopPktOffset belongs to the PRECEDING GOP
           if (gopPktOffset > 0) {
             const prevTail = uint8.subarray(0, gopPktOffset);
@@ -444,13 +523,18 @@ self.onmessage = function (e) {
             demuxer.push(prevTail);
           }
 
-          // 2. If the preceding GOP has reached minimum segment threshold (>= 350 KB),
+          // 2. If the accumulated buffer has reached minimum segment threshold (>= 350 KB),
           // flush it as a complete segment now!
           if (core && streamBufferBytes >= 350000) {
             processSegment();
+            // Start new segment anchored to this GOP
+            currentSegmentVideoPts = detectedGopPts !== null ? detectedGopPts : (demuxer ? demuxer.stats.lastVideoPts : null);
+            currentSegmentAudioPts = null;
+          } else if (currentSegmentVideoPts === null) {
+            currentSegmentVideoPts = detectedGopPts !== null ? detectedGopPts : (demuxer ? demuxer.stats.lastVideoPts : null);
           }
 
-          // 3. The new GOP starts cleanly at gopPktOffset (at the 188-byte packet boundary)
+          // 3. The new GOP starts cleanly at gopPktOffset
           const nextHead = uint8.subarray(gopPktOffset);
           streamBuffer.push(nextHead);
           streamBufferBytes += nextHead.length;
@@ -485,4 +569,11 @@ self.onmessage = function (e) {
       stopPipeline();
       break;
   }
+};
+
+self.onerror = function (e) {
+  self.postMessage({ type: 'ERROR', message: 'Worker unhandled error: ' + (e.message || e) });
+};
+self.onunhandledrejection = function (e) {
+  self.postMessage({ type: 'ERROR', message: 'Worker unhandled rejection: ' + (e.reason || e) });
 };
