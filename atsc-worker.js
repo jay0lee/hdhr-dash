@@ -20,6 +20,9 @@ let streamBuffer = [];
 let streamBufferBytes = 0;
 let segmentIndex = 0;
 let streamPts = null;
+let streamVideoPts = null;
+let streamAudioPts = null;
+let videoFps = 29.97;
 let videoWidth = 1920;
 let videoHeight = 1080;
 let isInterlaced = true;
@@ -132,13 +135,20 @@ async function initCore() {
     locateFile: (path) => 'ffmpeg/' + path,
     print: () => {},
     printErr: (msg) => {
-      // Sniff resolution / aspect ratio from FFmpeg output log
+      // Sniff resolution / aspect ratio / fps from FFmpeg output log
       if (msg && msg.includes('Video: mpeg2video')) {
         const m = msg.match(/(\d{3,4})x(\d{3,4})/);
         if (m) {
           videoWidth = parseInt(m[1], 10);
           videoHeight = parseInt(m[2], 10);
           isInterlaced = msg.includes('top first') || msg.includes('bottom first') || msg.includes('interlaced');
+        }
+        const mFps = msg.match(/([\d.]+)\s+fps/);
+        if (mFps) {
+          const parsedFps = parseFloat(mFps[1]);
+          if (parsedFps > 10 && parsedFps < 120) {
+            videoFps = parsedFps;
+          }
         }
       }
     }
@@ -199,10 +209,14 @@ function processSegment() {
     try { pcm = core.FS.readFile(pcmName); core.FS.unlink(pcmName); } catch (e) {}
     try { core.FS.unlink(inName); } catch (e) {}
 
-    if (streamPts === null) {
-      streamPts = 0;
+    if (streamVideoPts === null) {
+      streamVideoPts = 0;
     }
-    const basePts = streamPts;
+    if (streamAudioPts === null) {
+      streamAudioPts = streamVideoPts;
+    }
+
+    const frameDur = 1.0 / videoFps;
 
     // 1. Process and transfer decoded YUV420P video frames
     if (yuv && yuv.length > 0) {
@@ -211,7 +225,7 @@ function processSegment() {
       const yPlaneSize = videoWidth * videoHeight;
       const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
 
-      let curVideoPts = basePts;
+      let curVideoPts = streamVideoPts;
 
       for (let f = 0; f < numFrames; f++) {
         const frameOffset = f * frameBytes;
@@ -238,10 +252,9 @@ function processSegment() {
           [yBuf, uBuf, vBuf]
         );
 
-        if (curVideoPts !== null) {
-          curVideoPts += 1 / 29.97;
-        }
+        curVideoPts += frameDur;
       }
+      streamVideoPts = curVideoPts;
     }
 
     // 2. Process and transfer decoded 48 kHz stereo Float32 PCM audio
@@ -250,7 +263,7 @@ function processSegment() {
       const totalStereoSamples = Math.floor(f32.length / 2);
       const SAMPLES_PER_CHUNK = 9600; // 200ms audio chunk (seamless Web Audio playback)
 
-      let curAudioPts = basePts;
+      let curAudioPts = streamAudioPts;
 
       for (let s = 0; s < totalStereoSamples; s += SAMPLES_PER_CHUNK) {
         const chunkLen = Math.min(SAMPLES_PER_CHUNK, totalStereoSamples - s);
@@ -274,23 +287,17 @@ function processSegment() {
           [leftArr.buffer, rightArr.buffer]
         );
 
-        if (curAudioPts !== null) {
-          curAudioPts += chunkLen / 48000;
-        }
+        curAudioPts += chunkLen / 48000;
       }
+      streamAudioPts = curAudioPts;
     }
 
-    const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) / 29.97;
+    const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) * frameDur;
     const audDur = (pcm ? Math.floor(pcm.length / 8) : 0) / 48000;
     self.postMessage({
       type: 'WORKER_LOG',
-      text: `SEGMENT #${segmentIndex}: bytes=${merged.length} vidFrames=${yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0} (${vidDur.toFixed(3)}s) audSamples=${pcm ? Math.floor(pcm.length / 8) : 0} (${audDur.toFixed(3)}s)`
+      text: `SEGMENT #${segmentIndex}: bytes=${merged.length} fps=${videoFps.toFixed(2)} vidFrames=${yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0} (${vidDur.toFixed(3)}s) audSamples=${pcm ? Math.floor(pcm.length / 8) : 0} (${audDur.toFixed(3)}s)`
     });
-
-    // Advance master stream PTS by the maximum decoded media duration in this segment
-    if (basePts !== null) {
-      streamPts = basePts + Math.max(vidDur, audDur);
-    }
   } catch (err) {
     self.postMessage({ type: 'WORKER_LOG', text: 'SEGMENT_ERROR: ' + err.message + ' | ' + (err.stack || '') });
     console.error('Error during segment decoding:', err);
@@ -315,19 +322,23 @@ function initPipeline() {
       });
     },
     onStats: (stats) => {
-      // Forward telemetry to HUD
+      if (stats.videoFps && stats.videoFps > 0) {
+        videoFps = stats.videoFps;
+      }
       stats.videoWidth = videoWidth;
       stats.videoHeight = videoHeight;
       self.postMessage({ type: 'STATS', stats });
     },
     onVideoData: ({ pts }) => {
-      if (pts !== null && streamPts === null) {
-        streamPts = pts;
+      if (pts !== null && streamVideoPts === null) {
+        streamVideoPts = pts;
+        if (streamAudioPts === null) streamAudioPts = pts;
       }
     },
     onAudioData: ({ pts }) => {
-      if (pts !== null && streamPts === null) {
-        streamPts = pts;
+      if (pts !== null && streamAudioPts === null) {
+        streamAudioPts = pts;
+        if (streamVideoPts === null) streamVideoPts = pts;
       }
     },
     onError: (err) => {
@@ -344,6 +355,9 @@ function stopPipeline() {
   streamBuffer = [];
   streamBufferBytes = 0;
   streamPts = null;
+  streamVideoPts = null;
+  streamAudioPts = null;
+  videoFps = 29.97;
   savedPatPkt = null;
   savedPmtPkt = null;
   savedSeqPkt = null;
@@ -382,17 +396,17 @@ self.onmessage = function (e) {
           streamStarted = true;
         }
 
-        // If a GOP boundary is reached and we already have at least 500KB,
+        // If a GOP boundary is reached and we already have at least 300KB,
         // process the preceding GOP as a segment!
-        if (core && isGopBoundary && streamBufferBytes >= 500000) {
+        if (core && isGopBoundary && streamBufferBytes >= 300000) {
           processSegment();
         }
 
         streamBuffer.push(uint8);
         streamBufferBytes += uint8.length;
 
-        // Fallback for streams without detected sequence headers: flush at 1.1MB
-        if (core && streamBufferBytes >= 1100000) {
+        // Fallback for streams without detected sequence headers: flush at 1.0MB
+        if (core && streamBufferBytes >= 1000000) {
           processSegment();
         }
       }
