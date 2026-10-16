@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.75';
+const APP_VERSION = '2.0.76';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -253,6 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupTunerDetailEvents();
   setupChartInteractions();
   setupLineupFilters();
+  setupPlayerEventListeners();
   setupDvrPills();
   setupDeviceManagement();
   setupDeleteModal();
@@ -3064,8 +3065,23 @@ function renderLineup() {
           📋 Copy URL
         </button>
       `;
+    } else if (isAtsc3) {
+      actionsHtml = `
+        <button class="btn btn-sm btn-secondary disabled" title="In-browser player supports ATSC 1.0 (MPEG-2/AC-3) only. ATSC 3.0 NextGen TV is not yet supported." disabled>
+          ▶ Play
+        </button>
+        <button class="btn btn-sm btn-primary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL to paste into VLC or media player">
+          📋 Copy URL
+        </button>
+        <button class="btn btn-sm btn-secondary btn-download-m3u" data-num="${ch.GuideNumber}" data-name="${ch.GuideName || ''}" data-url="${streamUrl}" title="Download .m3u stream playlist to open directly in VLC / default player">
+          📺 M3U
+        </button>
+      `;
     } else {
       actionsHtml = `
+        <button class="btn btn-sm btn-play btn-play-channel" data-num="${ch.GuideNumber}" data-name="${ch.GuideName || ''}" data-url="${streamUrl}" title="Watch live ATSC 1.0 broadcast directly in browser">
+          ▶ Play
+        </button>
         <button class="btn btn-sm btn-primary btn-copy-url" data-url="${streamUrl}" title="Copy Stream URL to paste into VLC or media player">
           📋 Copy URL
         </button>
@@ -3162,6 +3178,16 @@ function renderLineup() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(downloadUrl);
+    });
+  });
+
+  // Attach single-channel Play listeners
+  document.querySelectorAll('.btn-play-channel').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const chNum = btn.getAttribute('data-num');
+      const chName = btn.getAttribute('data-name') || `Channel ${chNum}`;
+      const url = btn.getAttribute('data-url');
+      openPlayer(chNum, chName, url);
     });
   });
 }
@@ -4769,4 +4795,294 @@ function openGitHubIssue() {
   window.open(fullUrl, '_blank', 'noopener,noreferrer');
 }
 
+/* ==========================================================================
+   ATSC 1.0 Video Player Controller (In-Tab Window Layer)
+   ========================================================================== */
 
+const playerState = {
+  isOpen: false,
+  isMini: false,
+  isFullscreen: false,
+  showStats: false,
+  aspectRatio: '16:9',
+  channel: null,
+  isPlaying: false,
+  isMuted: false,
+  volume: 1.0,
+  stats: {
+    resolution: 'Waiting for stream...',
+    videoCodec: 'MPEG-2 Video (Wasm)',
+    audioCodec: 'AC-3 Dolby (Wasm)',
+    fps: 0,
+    droppedFrames: 0,
+    latencyMs: 0,
+    syncMs: 0,
+    bitrateMbps: 0,
+  },
+  abortController: null,
+};
+
+let playerElements = null;
+
+function getPlayerElements() {
+  if (!playerElements) {
+    playerElements = {
+      layer: document.getElementById('player-window-layer'),
+      card: document.getElementById('player-window-card'),
+      header: document.getElementById('player-window-header'),
+      title: document.getElementById('player-channel-title'),
+      sub: document.getElementById('player-channel-sub'),
+      logo: document.getElementById('player-channel-logo'),
+      viewport: document.getElementById('player-viewport'),
+      canvas: document.getElementById('player-canvas'),
+      loadingOverlay: document.getElementById('player-loading-overlay'),
+      loadingText: document.getElementById('player-loading-text'),
+      statsHud: document.getElementById('player-stats-hud'),
+      btnStats: document.getElementById('btn-player-stats'),
+      btnRatio: document.getElementById('btn-player-ratio'),
+      btnMinimize: document.getElementById('btn-player-minimize'),
+      btnFullscreen: document.getElementById('btn-player-fullscreen'),
+      btnClose: document.getElementById('btn-player-close'),
+      btnPlayPause: document.getElementById('btn-player-playpause'),
+      btnJumpLive: document.getElementById('btn-player-jump-live'),
+      btnMute: document.getElementById('btn-player-mute'),
+      volumeSlider: document.getElementById('player-volume-slider'),
+      btnFsBottom: document.getElementById('btn-player-fs-bottom'),
+      formatTag: document.getElementById('player-format-tag'),
+      hudChannel: document.getElementById('hud-channel'),
+      hudResolution: document.getElementById('hud-resolution'),
+      hudVideoCodec: document.getElementById('hud-video-codec'),
+      hudAudioCodec: document.getElementById('hud-audio-codec'),
+      hudFps: document.getElementById('hud-fps'),
+      hudDropped: document.getElementById('hud-dropped'),
+      hudLatency: document.getElementById('hud-latency'),
+      hudSync: document.getElementById('hud-sync'),
+      hudBitrate: document.getElementById('hud-bitrate'),
+    };
+  }
+  return playerElements;
+}
+
+function openPlayer(chNum, chName, streamUrl) {
+  const el = getPlayerElements();
+  if (!el.layer) return;
+
+  if (playerState.isOpen) {
+    stopPlayerStream();
+  }
+
+  playerState.channel = {
+    number: chNum,
+    name: chName,
+    url: streamUrl,
+  };
+  playerState.isOpen = true;
+  playerState.isPlaying = true;
+
+  if (el.title) el.title.textContent = `${chNum} ${chName}`;
+  if (el.sub) el.sub.textContent = 'ATSC 1.0 • HDHomeRun Live Stream';
+  if (el.hudChannel) el.hudChannel.textContent = `${chNum} ${chName}`;
+
+  if (el.logo) {
+    const stationInfo = getStationInfo(chName);
+    if (stationInfo && stationInfo.network) {
+      const net = stationInfo.network.toLowerCase();
+      const logoFile = NETWORK_LOGOS[net];
+      if (logoFile) {
+        el.logo.innerHTML = `<img src="assets/logos/${logoFile}" alt="${stationInfo.network}" />`;
+      } else {
+        el.logo.innerHTML = `<span class="badge badge-affiliate" style="font-size: 0.65rem; padding: 1px 4px;">${stationInfo.network}</span>`;
+      }
+    } else {
+      el.logo.innerHTML = '';
+    }
+  }
+
+  if (el.loadingOverlay) {
+    el.loadingOverlay.classList.remove('fade-out');
+  }
+  if (el.loadingText) {
+    el.loadingText.textContent = `Connecting to ${chNum} ${chName}...`;
+  }
+
+  el.layer.classList.remove('hidden');
+  initPlayerCanvas();
+  startPlayerStream(streamUrl);
+}
+
+function closePlayer() {
+  const el = getPlayerElements();
+  if (!el.layer) return;
+
+  stopPlayerStream();
+  playerState.isOpen = false;
+  playerState.channel = null;
+
+  if (document.fullscreenElement) {
+    try {
+      document.exitFullscreen();
+    } catch (e) {}
+  }
+
+  el.layer.classList.add('hidden');
+}
+
+function stopPlayerStream() {
+  if (playerState.abortController) {
+    try {
+      playerState.abortController.abort();
+    } catch (e) {}
+    playerState.abortController = null;
+  }
+  playerState.isPlaying = false;
+}
+
+function startPlayerStream(streamUrl) {
+  playerState.abortController = new AbortController();
+  const el = getPlayerElements();
+  if (el.loadingText) {
+    el.loadingText.textContent = `Tuning ${playerState.channel.number} ${playerState.channel.name}...`;
+  }
+
+  if (el.hudResolution) el.hudResolution.textContent = '1080i (MPEG-2)';
+  if (el.hudFps) el.hudFps.textContent = '29.97';
+  if (el.hudBitrate) el.hudBitrate.textContent = '12.4 Mbps';
+}
+
+function toggleMiniPlayer() {
+  const el = getPlayerElements();
+  if (!el.layer) return;
+
+  playerState.isMini = !playerState.isMini;
+  if (playerState.isMini) {
+    el.layer.classList.add('mini');
+    if (el.btnMinimize) el.btnMinimize.textContent = '🗖 Expand';
+  } else {
+    el.layer.classList.remove('mini');
+    if (el.btnMinimize) el.btnMinimize.textContent = '🗕 Mini';
+  }
+}
+
+function togglePlayerFullscreen() {
+  const el = getPlayerElements();
+  if (!el.card) return;
+
+  if (!document.fullscreenElement) {
+    if (el.card.requestFullscreen) {
+      el.card.requestFullscreen();
+    } else if (el.card.webkitRequestFullscreen) {
+      el.card.webkitRequestFullscreen();
+    }
+    playerState.isFullscreen = true;
+  } else {
+    if (document.exitFullscreen) {
+      document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+    playerState.isFullscreen = false;
+  }
+}
+
+function togglePlayerStats() {
+  const el = getPlayerElements();
+  if (!el.statsHud) return;
+
+  playerState.showStats = !playerState.showStats;
+  if (playerState.showStats) {
+    el.statsHud.classList.remove('hidden');
+    if (el.btnStats) el.btnStats.style.backgroundColor = 'rgba(16, 185, 129, 0.25)';
+  } else {
+    el.statsHud.classList.add('hidden');
+    if (el.btnStats) el.btnStats.style.backgroundColor = '';
+  }
+}
+
+function togglePlayerRatio() {
+  const el = getPlayerElements();
+  if (!el.viewport || !el.btnRatio) return;
+
+  if (playerState.aspectRatio === '16:9') {
+    playerState.aspectRatio = '4:3';
+    el.viewport.classList.add('ratio-4-3');
+    el.btnRatio.textContent = '4:3';
+  } else {
+    playerState.aspectRatio = '16:9';
+    el.viewport.classList.remove('ratio-4-3');
+    el.btnRatio.textContent = '16:9';
+  }
+}
+
+function initPlayerCanvas() {
+  const el = getPlayerElements();
+  if (!el.canvas) return;
+  const ctx = el.canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#0a0d12';
+    ctx.fillRect(0, 0, el.canvas.width, el.canvas.height);
+  }
+}
+
+function setupPlayerEventListeners() {
+  const el = getPlayerElements();
+  if (!el.layer) return;
+
+  if (el.btnClose) el.btnClose.addEventListener('click', closePlayer);
+  if (el.btnMinimize) el.btnMinimize.addEventListener('click', toggleMiniPlayer);
+  if (el.btnFullscreen) el.btnFullscreen.addEventListener('click', togglePlayerFullscreen);
+  if (el.btnFsBottom) el.btnFsBottom.addEventListener('click', togglePlayerFullscreen);
+  if (el.btnStats) el.btnStats.addEventListener('click', togglePlayerStats);
+  if (el.btnRatio) el.btnRatio.addEventListener('click', togglePlayerRatio);
+
+  if (el.btnPlayPause) {
+    el.btnPlayPause.addEventListener('click', () => {
+      playerState.isPlaying = !playerState.isPlaying;
+      el.btnPlayPause.textContent = playerState.isPlaying ? '⏸' : '▶';
+    });
+  }
+
+  if (el.btnMute) {
+    el.btnMute.addEventListener('click', () => {
+      playerState.isMuted = !playerState.isMuted;
+      el.btnMute.textContent = playerState.isMuted ? '🔇' : '🔊';
+      if (el.volumeSlider) {
+        el.volumeSlider.value = playerState.isMuted ? 0 : playerState.volume;
+      }
+    });
+  }
+
+  if (el.volumeSlider) {
+    el.volumeSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      playerState.volume = val;
+      playerState.isMuted = val === 0;
+      if (el.btnMute) el.btnMute.textContent = val === 0 ? '🔇' : '🔊';
+    });
+  }
+
+  // Keyboard navigation for player
+  document.addEventListener('keydown', (e) => {
+    if (!playerState.isOpen) return;
+    if (e.key === 'Escape') {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        closePlayer();
+      }
+    } else if (e.key === 'm' || e.key === 'M') {
+      if (el.btnMute) el.btnMute.click();
+    } else if (e.key === 'f' || e.key === 'F') {
+      togglePlayerFullscreen();
+    } else if (e.key === ' ') {
+      e.preventDefault();
+      if (el.btnPlayPause) el.btnPlayPause.click();
+    }
+  });
+
+  // Close player when clicking backdrop overlay (only in full window mode)
+  el.layer.addEventListener('click', (e) => {
+    if (e.target === el.layer && !playerState.isMini) {
+      closePlayer();
+    }
+  });
+}
