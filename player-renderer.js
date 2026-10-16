@@ -231,7 +231,8 @@
       const uArr = uPlane instanceof Uint8Array ? uPlane : new Uint8Array(uPlane);
       const vArr = vPlane instanceof Uint8Array ? vPlane : new Uint8Array(vPlane);
 
-      if (this.videoWidth !== width || this.videoHeight !== height) {
+      const isNewSize = this.videoWidth !== width || this.videoHeight !== height;
+      if (isNewSize) {
         this.videoWidth = width;
         this.videoHeight = height;
         if (this.canvas.width !== width || this.canvas.height !== height) {
@@ -241,52 +242,35 @@
         gl.viewport(0, 0, width, height);
       }
 
+      const uWidth = width >> 1;
+      const uHeight = height >> 1;
+
       // Upload Y Plane (Width x Height)
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.textureY);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.LUMINANCE,
-        width,
-        height,
-        0,
-        gl.LUMINANCE,
-        gl.UNSIGNED_BYTE,
-        yArr
-      );
+      if (isNewSize) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, width, height, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, yArr);
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.LUMINANCE, gl.UNSIGNED_BYTE, yArr);
+      }
 
       // Upload U Plane (Width / 2 x Height / 2)
-      const uWidth = width >> 1;
-      const uHeight = height >> 1;
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, this.textureU);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.LUMINANCE,
-        uWidth,
-        uHeight,
-        0,
-        gl.LUMINANCE,
-        gl.UNSIGNED_BYTE,
-        uArr
-      );
+      if (isNewSize) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uWidth, uHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, uArr);
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, uWidth, uHeight, gl.LUMINANCE, gl.UNSIGNED_BYTE, uArr);
+      }
 
       // Upload V Plane (Width / 2 x Height / 2)
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, this.textureV);
-      gl.texImage2D(
-        gl.TEXTURE_2D,
-        0,
-        gl.LUMINANCE,
-        uWidth,
-        uHeight,
-        0,
-        gl.LUMINANCE,
-        gl.UNSIGNED_BYTE,
-        vArr
-      );
+      if (isNewSize) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, uWidth, uHeight, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, vArr);
+      } else {
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, uWidth, uHeight, gl.LUMINANCE, gl.UNSIGNED_BYTE, vArr);
+      }
 
       // Set deinterlace uniforms
       if (this.deinterlace && isInterlaced) {
@@ -390,8 +374,8 @@
       // Schedule next playback time contiguously (gapless)
       let startTime = this.nextPlayTime;
       if (!startTime || startTime < curTime) {
-        // Buffer underflow or initial frame: start slightly ahead of current hardware clock
-        startTime = curTime + 0.030;
+        // Buffer underflow or initial frame: start 80ms ahead to cushion against JS GC/worker bursts
+        startTime = curTime + 0.080;
       } else if (startTime > curTime + 3.0) {
         // Prevent excessive accumulation if tab was backgrounded or starved
         startTime = curTime + 0.200;
@@ -580,8 +564,8 @@
             continue;
           }
 
-          if (delta <= 0.040 || Math.abs(delta) > 2.0) {
-            // Frame is ready for display (within 20ms of audio clock, or skew resynced)
+          if (delta <= 0.015 || Math.abs(delta) > 2.0) {
+            // Frame is ready for display (within 15ms of audio clock, or skew resynced)
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,

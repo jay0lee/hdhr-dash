@@ -30,10 +30,28 @@ let savedPatPkt = null;
 let savedPmtPkt = null;
 let savedSeqPkt = null;
 let savedHeader = null;
+let streamStarted = false;
+let discardedBytes = 0;
+
+function findTsSyncOffset(chunk) {
+  const maxSearch = Math.min(chunk.length, 376);
+  for (let i = 0; i < maxSearch; i++) {
+    if (chunk[i] === 0x47) {
+      if (i + 188 < chunk.length) {
+        if (chunk[i + 188] === 0x47) return i;
+      } else {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
 
 function updateHeader(chunk) {
   if (savedHeader) return;
-  for (let i = 0; i + 188 <= chunk.length; i += 188) {
+  const syncOffset = findTsSyncOffset(chunk);
+  if (syncOffset === -1) return;
+  for (let i = syncOffset; i + 188 <= chunk.length; i += 188) {
     if (chunk[i] !== 0x47) continue;
     const pid = ((chunk[i + 1] & 0x1f) << 8) | chunk[i + 2];
     if (pid === 0 && !savedPatPkt) {
@@ -59,6 +77,16 @@ function updateHeader(chunk) {
       break;
     }
   }
+}
+
+function hasSeqHeader(chunk) {
+  const len = chunk.length - 4;
+  for (let i = 0; i <= len; i++) {
+    if (chunk[i] === 0 && chunk[i + 1] === 0 && chunk[i + 2] === 1 && chunk[i + 3] === 0xb3) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Helper to run FFmpeg CLI commands in WebAssembly
@@ -155,6 +183,7 @@ function processSegment() {
 
     runFFmpeg([
       '-i', inName,
+      '-vsync', '0',
       '-f', 'rawvideo',
       '-pix_fmt', 'yuv420p',
       yuvName,
@@ -170,6 +199,9 @@ function processSegment() {
     try { pcm = core.FS.readFile(pcmName); core.FS.unlink(pcmName); } catch (e) {}
     try { core.FS.unlink(inName); } catch (e) {}
 
+    if (streamPts === null) {
+      streamPts = 0;
+    }
     const basePts = streamPts;
 
     // 1. Process and transfer decoded YUV420P video frames
@@ -248,10 +280,15 @@ function processSegment() {
       }
     }
 
+    const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) / 29.97;
+    const audDur = (pcm ? Math.floor(pcm.length / 8) : 0) / 48000;
+    self.postMessage({
+      type: 'WORKER_LOG',
+      text: `SEGMENT #${segmentIndex}: bytes=${merged.length} vidFrames=${yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0} (${vidDur.toFixed(3)}s) audSamples=${pcm ? Math.floor(pcm.length / 8) : 0} (${audDur.toFixed(3)}s)`
+    });
+
     // Advance master stream PTS by the maximum decoded media duration in this segment
     if (basePts !== null) {
-      const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) / 29.97;
-      const audDur = (pcm ? Math.floor(pcm.length / 8) : 0) / 48000;
       streamPts = basePts + Math.max(vidDur, audDur);
     }
   } catch (err) {
@@ -311,6 +348,8 @@ function stopPipeline() {
   savedPmtPkt = null;
   savedSeqPkt = null;
   savedHeader = null;
+  streamStarted = false;
+  discardedBytes = 0;
 }
 
 self.onmessage = function (e) {
@@ -332,11 +371,28 @@ self.onmessage = function (e) {
         demuxer.push(uint8);
         updateHeader(uint8);
 
+        const isGopBoundary = hasSeqHeader(uint8);
+
+        if (!streamStarted) {
+          if (!isGopBoundary && discardedBytes < 1200000) {
+            // Discard partial frame packets received before the first clean Sequence Header
+            discardedBytes += uint8.length;
+            return;
+          }
+          streamStarted = true;
+        }
+
+        // If a GOP boundary is reached and we already have at least 500KB,
+        // process the preceding GOP as a segment!
+        if (core && isGopBoundary && streamBufferBytes >= 500000) {
+          processSegment();
+        }
+
         streamBuffer.push(uint8);
         streamBufferBytes += uint8.length;
 
-        // Trigger decode segment every ~300KB once header is captured, or after 1.2MB initial buffer
-        if (core && streamBufferBytes >= 300000 && (savedHeader || streamBufferBytes >= 1200000)) {
+        // Fallback for streams without detected sequence headers: flush at 1.1MB
+        if (core && streamBufferBytes >= 1100000) {
           processSegment();
         }
       }
