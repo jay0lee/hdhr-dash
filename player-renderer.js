@@ -382,18 +382,27 @@
       const curTime = this.context.currentTime;
       const duration = lArr.length / sampleRate;
 
-      // Schedule next playback time
-      let startTime = Math.max(curTime, this.nextPlayTime);
-      if (startTime > curTime + 0.3) {
-        // Prevent audio buffer over-accumulation during network jitter
-        startTime = curTime + 0.05;
+      // Ensure audio context is active
+      if (this.context.state === 'suspended') {
+        this.context.resume().catch(() => {});
+      }
+
+      // Schedule next playback time contiguously (gapless)
+      let startTime = this.nextPlayTime;
+      if (!startTime || startTime < curTime) {
+        // Buffer underflow or initial frame: start slightly ahead of current hardware clock
+        startTime = curTime + 0.030;
+      } else if (startTime > curTime + 3.0) {
+        // Prevent excessive accumulation if tab was backgrounded or starved
+        startTime = curTime + 0.200;
       }
       this.nextPlayTime = startTime + duration;
 
       // Update monotonic master audio clock
       if (
         this.baseAudioPts === null ||
-        Math.abs(this.getMasterClockPts() - pts) > 0.15
+        curTime > this.nextPlayTime ||
+        Math.abs(this.getMasterClockPts() - pts) > 1.5
       ) {
         this.baseAudioPts = pts;
         this.baseContextTime = startTime;

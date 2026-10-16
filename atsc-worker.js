@@ -100,6 +100,7 @@ async function initCore() {
   if (corePromise) return corePromise;
 
   corePromise = createFFmpegCore({
+    noExitRuntime: true,
     locateFile: (path) => 'ffmpeg/' + path,
     print: () => {},
     printErr: (msg) => {
@@ -215,7 +216,7 @@ function processSegment() {
     if (pcm && pcm.length > 0) {
       const f32 = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
       const totalStereoSamples = Math.floor(f32.length / 2);
-      const SAMPLES_PER_CHUNK = 1536; // 32ms syncframe equivalent
+      const SAMPLES_PER_CHUNK = 9600; // 200ms audio chunk (seamless Web Audio playback)
 
       let curAudioPts = basePts;
 
