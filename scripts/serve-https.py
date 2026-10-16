@@ -10,6 +10,7 @@ across a local home network.
 
 import argparse
 import http.server
+import ipaddress
 import mimetypes
 import os
 import shutil
@@ -18,11 +19,14 @@ import ssl
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 # Ensure correct MIME types for web assets
 mimetypes.add_type('application/javascript', '.js')
 mimetypes.add_type('application/json', '.json')
+mimetypes.add_type('application/wasm', '.wasm')
 mimetypes.add_type('image/svg+xml', '.svg')
 mimetypes.add_type('application/manifest+json', '.webmanifest')
 mimetypes.add_type('audio/x-mpegurl', '.m3u')
@@ -82,7 +86,7 @@ def generate_self_signed_cert(cert_path, key_path, lan_ip='127.0.0.1'):
 
 
 class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
-    """Custom request handler that adds security/caching headers."""
+    """Custom request handler that adds security/caching headers and stream proxying."""
     def end_headers(self):
         # Allow cross-origin requests for local API queries if needed
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -90,6 +94,76 @@ class CustomHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if self.path.endswith(('.html', '.js', '.css', '.json')):
             self.send_header('Cache-Control', 'no-cache, must-revalidate')
         super().end_headers()
+
+    def do_GET(self):
+        if self.path.startswith('/api/stream?') or self.path == '/api/stream':
+            self.handle_stream_proxy()
+            return
+        super().do_GET()
+
+    def handle_stream_proxy(self):
+        """Pass-through streaming proxy for local HDHomeRun tuner streams over HTTP."""
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+        target_url = params.get('url', [None])[0]
+
+        if not target_url:
+            self.send_error(400, "Missing 'url' query parameter")
+            return
+
+        target_parsed = urllib.parse.urlparse(target_url)
+        if target_parsed.scheme != 'http':
+            self.send_error(400, "Only plain 'http' URLs are supported for tuner streaming")
+            return
+
+        hostname = target_parsed.hostname
+        if not hostname:
+            self.send_error(400, "Invalid host in stream URL")
+            return
+
+        is_allowed = False
+        if hostname in ('localhost', '127.0.0.1') or hostname.endswith('.local'):
+            is_allowed = True
+        else:
+            try:
+                ip = ipaddress.ip_address(hostname)
+                if ip.is_private or ip.is_loopback:
+                    is_allowed = True
+            except ValueError:
+                pass
+
+        if not is_allowed:
+            self.send_error(403, f"Streaming forbidden for non-local host: {hostname}")
+            return
+
+        try:
+            req = urllib.request.Request(
+                target_url,
+                headers={'User-Agent': 'HDHR-Dash/2.0'}
+            )
+            upstream = urllib.request.urlopen(req, timeout=8)
+        except Exception as e:
+            self.send_error(502, f"Failed to connect to tuner stream: {e}")
+            return
+
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp2t')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+
+            while True:
+                chunk = upstream.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            upstream.close()
 
     def log_message(self, format, *args):
         # Cleaner console logs

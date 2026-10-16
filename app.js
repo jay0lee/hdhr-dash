@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.76';
+const APP_VERSION = '2.0.77';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4811,8 +4811,8 @@ const playerState = {
   volume: 1.0,
   stats: {
     resolution: 'Waiting for stream...',
-    videoCodec: 'MPEG-2 Video (Wasm)',
-    audioCodec: 'AC-3 Dolby (Wasm)',
+    videoCodec: 'MPEG-2 Video',
+    audioCodec: 'AC-3 Dolby Digital',
     fps: 0,
     droppedFrames: 0,
     latencyMs: 0,
@@ -4820,6 +4820,10 @@ const playerState = {
     bitrateMbps: 0,
   },
   abortController: null,
+  demuxer: null,
+  streamReader: null,
+  lastStatsTime: 0,
+  lastStatsBytes: 0,
 };
 
 let playerElements = null;
@@ -4934,19 +4938,165 @@ function stopPlayerStream() {
     } catch (e) {}
     playerState.abortController = null;
   }
+  if (playerState.demuxer) {
+    try {
+      playerState.demuxer.flush();
+    } catch (e) {}
+    playerState.demuxer = null;
+  }
+  playerState.streamReader = null;
   playerState.isPlaying = false;
+  const el = getPlayerElements();
+  if (el.btnPlayPause) el.btnPlayPause.textContent = '▶';
 }
 
-function startPlayerStream(streamUrl) {
+async function startPlayerStream(streamUrl) {
+  stopPlayerStream();
+
   playerState.abortController = new AbortController();
+  const signal = playerState.abortController.signal;
+  playerState.isPlaying = true;
+
   const el = getPlayerElements();
+  if (el.btnPlayPause) el.btnPlayPause.textContent = '⏸';
   if (el.loadingText) {
     el.loadingText.textContent = `Tuning ${playerState.channel.number} ${playerState.channel.name}...`;
   }
+  if (el.loadingOverlay) {
+    el.loadingOverlay.classList.remove('fade-out');
+  }
 
-  if (el.hudResolution) el.hudResolution.textContent = '1080i (MPEG-2)';
-  if (el.hudFps) el.hudFps.textContent = '29.97';
-  if (el.hudBitrate) el.hudBitrate.textContent = '12.4 Mbps';
+  // Reset telemetry indicators
+  if (el.hudBitrate) el.hudBitrate.textContent = 'Buffering...';
+  if (el.hudResolution) el.hudResolution.textContent = 'Detecting...';
+  if (el.hudFps) el.hudFps.textContent = '--';
+  if (el.hudDropped) el.hudDropped.textContent = '0';
+  if (el.hudSync) el.hudSync.textContent = '0 ms';
+
+  playerState.lastStatsTime = performance.now();
+  playerState.lastStatsBytes = 0;
+
+  // Initialize ATSC MPEG-TS Demuxer
+  if (typeof ATSCDemuxer !== 'undefined') {
+    playerState.demuxer = new ATSCDemuxer({
+      onPAT: (programs) => {
+        if (el.loadingText) {
+          el.loadingText.textContent = `Found Program (PAT)...`;
+        }
+      },
+      onPMT: ({ pcrPid, streams }) => {
+        if (el.loadingText) {
+          el.loadingText.textContent = `Found Stream Map (PMT)...`;
+        }
+        if (el.hudVideoCodec && playerState.demuxer.videoStreamType) {
+          el.hudVideoCodec.textContent =
+            playerState.demuxer.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
+        }
+        if (el.hudAudioCodec && playerState.demuxer.audioStreamType) {
+          el.hudAudioCodec.textContent =
+            playerState.demuxer.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
+        }
+      },
+      onVideoData: ({ pts, dts, data }) => {
+        // Stream has delivered video PES packets: dismiss loading overlay
+        if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
+          el.loadingOverlay.classList.add('fade-out');
+        }
+        if (playerState.demuxer.stats.videoWidth && playerState.demuxer.stats.videoHeight) {
+          const w = playerState.demuxer.stats.videoWidth;
+          const h = playerState.demuxer.stats.videoHeight;
+          const fps = playerState.demuxer.stats.videoFps ? ` • ${playerState.demuxer.stats.videoFps} fps` : '';
+          if (el.hudResolution) {
+            el.hudResolution.textContent = `${w}x${h}${fps}`;
+          }
+        }
+        if (playerState.demuxer.stats.videoFps && el.hudFps) {
+          el.hudFps.textContent = playerState.demuxer.stats.videoFps.toString();
+        }
+      },
+      onAudioData: ({ pts, dts, data }) => {
+        if (playerState.demuxer.stats.audioSampleRate && el.hudAudioCodec) {
+          const sr = (playerState.demuxer.stats.audioSampleRate / 1000).toFixed(1) + ' kHz';
+          const ch = playerState.demuxer.stats.audioChannels ? ` (${playerState.demuxer.stats.audioChannels}ch)` : '';
+          el.hudAudioCodec.textContent = `AC-3 ${sr}${ch}`;
+        }
+      },
+      onStats: (stats) => {
+        const now = performance.now();
+        const dt = (now - playerState.lastStatsTime) / 1000.0;
+        if (dt >= 0.5) {
+          const dBytes = stats.bytesParsed - playerState.lastStatsBytes;
+          const mbps = (dBytes * 8) / (dt * 1000000);
+          playerState.lastStatsTime = now;
+          playerState.lastStatsBytes = stats.bytesParsed;
+          if (el.hudBitrate) {
+            el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
+          }
+          if (el.hudDropped) {
+            el.hudDropped.textContent = stats.packetsDropped.toString();
+          }
+          if (el.hudSync) {
+            const sign = stats.avSkewMs >= 0 ? '+' : '';
+            el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
+          }
+        }
+      },
+      onError: (err) => {
+        console.warn('Demuxer error:', err);
+      }
+    });
+  }
+
+  // Determine streaming URL (use local streaming proxy when served over HTTPS to avoid Mixed Content blocks)
+  let fetchUrl = streamUrl;
+  if (window.location.protocol === 'https:' && streamUrl.startsWith('http:')) {
+    fetchUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
+  }
+
+  try {
+    let res = null;
+    try {
+      res = await fetch(fetchUrl, { signal });
+    } catch (fetchErr) {
+      if (fetchUrl === streamUrl && streamUrl.startsWith('http:')) {
+        console.warn('Direct stream fetch failed, falling back to local proxy...');
+        const proxyUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}`;
+        res = await fetch(proxyUrl, { signal });
+      } else {
+        throw fetchErr;
+      }
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
+    const reader = res.body.getReader();
+    playerState.streamReader = reader;
+
+    while (playerState.isPlaying && playerState.isOpen) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0 && playerState.demuxer) {
+        playerState.demuxer.push(value);
+      }
+    }
+  } catch (err) {
+    if (signal.aborted) {
+      return; // Expected exit when stopping or switching channels
+    }
+    console.error('Player streaming error:', err);
+    if (el.loadingText) {
+      el.loadingText.textContent = `Streaming error: ${err.message || err}`;
+    }
+    if (el.loadingOverlay) {
+      el.loadingOverlay.classList.remove('fade-out');
+    }
+  } finally {
+    if (playerState.demuxer) {
+      playerState.demuxer.flush();
+    }
+  }
 }
 
 function toggleMiniPlayer() {
@@ -5036,8 +5186,19 @@ function setupPlayerEventListeners() {
 
   if (el.btnPlayPause) {
     el.btnPlayPause.addEventListener('click', () => {
-      playerState.isPlaying = !playerState.isPlaying;
-      el.btnPlayPause.textContent = playerState.isPlaying ? '⏸' : '▶';
+      if (playerState.isPlaying) {
+        stopPlayerStream();
+      } else if (playerState.channel && playerState.channel.url) {
+        startPlayerStream(playerState.channel.url);
+      }
+    });
+  }
+
+  if (el.btnJumpLive) {
+    el.btnJumpLive.addEventListener('click', () => {
+      if (playerState.channel && playerState.channel.url) {
+        startPlayerStream(playerState.channel.url);
+      }
     });
   }
 
