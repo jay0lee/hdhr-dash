@@ -1,10 +1,13 @@
-const CACHE_NAME = 'hdhr-dash-v81';
+const CACHE_NAME = 'hdhr-dash-v82';
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './style.css?v=2.0.78',
-  './atsc-demuxer.js?v=2.0.78',
-  './app.js?v=2.0.78',
+  './style.css?v=2.0.79',
+  './atsc-demuxer.js?v=2.0.79',
+  './atsc-decoder.js?v=2.0.79',
+  './player-renderer.js?v=2.0.79',
+  './atsc-worker.js',
+  './app.js?v=2.0.79',
   './stations.json',
   './assets/logos/generic-tv.svg',
   './assets/logos/abc.svg',

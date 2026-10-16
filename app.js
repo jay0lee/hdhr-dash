@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.78';
+const APP_VERSION = '2.0.79';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4820,8 +4820,10 @@ const playerState = {
     bitrateMbps: 0,
   },
   abortController: null,
-  demuxer: null,
-  streamReader: null,
+  worker: null,
+  renderer: null,
+  audioPlayer: null,
+  sync: null,
   lastStatsTime: 0,
   lastStatsBytes: 0,
 };
@@ -4932,6 +4934,13 @@ function closePlayer() {
 }
 
 function stopPlayerStream() {
+  if (playerState.worker) {
+    try {
+      playerState.worker.postMessage({ type: 'STOP' });
+      playerState.worker.terminate();
+    } catch (e) {}
+    playerState.worker = null;
+  }
   if (playerState.abortController) {
     try {
       playerState.abortController.abort();
@@ -4944,6 +4953,15 @@ function stopPlayerStream() {
     } catch (e) {}
     playerState.demuxer = null;
   }
+  if (playerState.sync) {
+    playerState.sync.stop();
+  }
+  if (playerState.audioPlayer) {
+    playerState.audioPlayer.reset();
+  }
+  if (playerState.renderer) {
+    playerState.renderer.clear();
+  }
   playerState.streamReader = null;
   playerState.isPlaying = false;
   const el = getPlayerElements();
@@ -4953,14 +4971,12 @@ function stopPlayerStream() {
 async function startPlayerStream(streamUrl) {
   stopPlayerStream();
 
-  playerState.abortController = new AbortController();
-  const signal = playerState.abortController.signal;
   playerState.isPlaying = true;
 
   const el = getPlayerElements();
   if (el.btnPlayPause) el.btnPlayPause.textContent = '⏸';
   if (el.loadingText) {
-    el.loadingText.textContent = `Tuning ${playerState.channel.number} ${playerState.channel.name}...`;
+    el.loadingText.textContent = `Tuning ${playerState.channel ? playerState.channel.number + ' ' + playerState.channel.name : 'channel'}...`;
   }
   if (el.loadingOverlay) {
     el.loadingOverlay.classList.remove('fade-out');
@@ -4976,18 +4992,178 @@ async function startPlayerStream(streamUrl) {
   playerState.lastStatsTime = performance.now();
   playerState.lastStatsBytes = 0;
 
-  // Initialize ATSC MPEG-TS Demuxer
-  if (typeof ATSCDemuxer !== 'undefined') {
-    playerState.demuxer = new ATSCDemuxer({
-      onPAT: (programs) => {
+  // Unlock and resume Web Audio API context on user gesture
+  if (playerState.audioPlayer) {
+    playerState.audioPlayer.resume();
+  }
+
+  // Start AV Synchronizer presentation loop
+  if (playerState.sync) {
+    playerState.sync.start();
+  }
+
+  // 1. Primary path: Offload stream ingestion, demuxing, and decoding to Web Worker
+  if (typeof Worker !== 'undefined') {
+    try {
+      playerState.worker = new Worker('atsc-worker.js');
+
+      playerState.worker.onmessage = function (e) {
+        const msg = e.data;
+        if (!msg) return;
+
+        switch (msg.type) {
+          case 'PAT':
+            if (el.loadingText) {
+              el.loadingText.textContent = 'Found Program (PAT)...';
+            }
+            break;
+
+          case 'PMT':
+            if (el.loadingText) {
+              el.loadingText.textContent = 'Found Stream Map (PMT)...';
+            }
+            if (el.hudVideoCodec && msg.videoStreamType) {
+              el.hudVideoCodec.textContent =
+                msg.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
+            }
+            if (el.hudAudioCodec && msg.audioStreamType) {
+              el.hudAudioCodec.textContent =
+                msg.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
+            }
+            break;
+
+          case 'VIDEO_FRAME':
+            // Dismiss loading overlay on first decoded video frame
+            if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
+              el.loadingOverlay.classList.add('fade-out');
+            }
+            if (el.hudResolution && msg.width && msg.height) {
+              el.hudResolution.textContent = `${msg.width}x${msg.height}`;
+            }
+            if (playerState.sync) {
+              playerState.sync.queueVideoFrame({
+                pts: msg.pts,
+                width: msg.width,
+                height: msg.height,
+                isInterlaced: msg.isInterlaced,
+                y: msg.y,
+                u: msg.u,
+                v: msg.v,
+              });
+            }
+            break;
+
+          case 'AUDIO_FRAME':
+            if (playerState.audioPlayer) {
+              playerState.audioPlayer.queueAudio(
+                msg.left,
+                msg.right,
+                msg.pts,
+                msg.sampleRate || 48000
+              );
+            }
+            if (el.hudAudioCodec && msg.sampleRate) {
+              const sr = (msg.sampleRate / 1000).toFixed(1) + ' kHz';
+              const ch = msg.channels ? ` (${msg.channels}ch)` : '';
+              el.hudAudioCodec.textContent = `AC-3 ${sr}${ch}`;
+            }
+            break;
+
+          case 'STATS': {
+            const stats = msg.stats;
+            const now = performance.now();
+            const dt = (now - playerState.lastStatsTime) / 1000.0;
+            if (dt >= 0.5) {
+              const dBytes = stats.bytesParsed - playerState.lastStatsBytes;
+              const mbps = (dBytes * 8) / (dt * 1000000);
+              playerState.lastStatsTime = now;
+              playerState.lastStatsBytes = stats.bytesParsed;
+              if (el.hudBitrate) {
+                el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
+              }
+              if (el.hudDropped && stats.packetsDropped !== undefined) {
+                el.hudDropped.textContent = stats.packetsDropped.toString();
+              }
+              if (el.hudSync && stats.avSkewMs !== undefined) {
+                const sign = stats.avSkewMs >= 0 ? '+' : '';
+                el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
+              }
+            }
+            break;
+          }
+
+          case 'ERROR':
+            console.warn('Worker reported stream error:', msg.message);
+            if (el.loadingText) {
+              el.loadingText.textContent = `Stream error: ${msg.message}`;
+            }
+            break;
+
+          case 'STREAM_ENDED':
+            if (playerState.isPlaying) {
+              stopPlayerStream();
+            }
+            break;
+        }
+      };
+
+      playerState.worker.onerror = function (err) {
+        console.error('Player worker error:', err);
         if (el.loadingText) {
-          el.loadingText.textContent = `Found Program (PAT)...`;
+          el.loadingText.textContent = `Worker error: ${err.message || 'Worker failure'}`;
+        }
+      };
+
+      playerState.worker.postMessage({ type: 'START', streamUrl });
+      return;
+    } catch (workerErr) {
+      console.warn('Web Worker creation failed, using main-thread fallback:', workerErr);
+    }
+  }
+
+  // 2. Fallback path: Ingest on main thread
+  startPlayerStreamFallback(streamUrl);
+}
+
+async function startPlayerStreamFallback(streamUrl) {
+  playerState.abortController = new AbortController();
+  const signal = playerState.abortController.signal;
+  const el = getPlayerElements();
+
+  let videoDecoder = null;
+  let audioDecoder = null;
+  if (typeof MPEG2VideoDecoder !== 'undefined') {
+    videoDecoder = new MPEG2VideoDecoder({
+      onFrame: (frame) => {
+        if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
+          el.loadingOverlay.classList.add('fade-out');
+        }
+        if (el.hudResolution && frame.width && frame.height) {
+          el.hudResolution.textContent = `${frame.width}x${frame.height}`;
+        }
+        if (playerState.sync) {
+          playerState.sync.queueVideoFrame(frame);
         }
       },
-      onPMT: ({ pcrPid, streams }) => {
-        if (el.loadingText) {
-          el.loadingText.textContent = `Found Stream Map (PMT)...`;
+    });
+  }
+  if (typeof AC3AudioDecoder !== 'undefined') {
+    audioDecoder = new AC3AudioDecoder({
+      onAudio: (audio) => {
+        if (playerState.audioPlayer) {
+          playerState.audioPlayer.queueAudio(audio.left, audio.right, audio.pts, audio.sampleRate);
         }
+      },
+    });
+  }
+
+  if (typeof ATSCDemuxer !== 'undefined') {
+    playerState.demuxer = new ATSCDemuxer({
+      onPAT: () => {
+        if (el.loadingText) el.loadingText.textContent = 'Found Program (PAT)...';
+      },
+      onPMT: () => {
+        if (el.loadingText) el.loadingText.textContent = 'Found Stream Map (PMT)...';
         if (el.hudVideoCodec && playerState.demuxer.videoStreamType) {
           el.hudVideoCodec.textContent =
             playerState.demuxer.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
@@ -4997,29 +5173,11 @@ async function startPlayerStream(streamUrl) {
             playerState.demuxer.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
         }
       },
-      onVideoData: ({ pts, dts, data }) => {
-        // Stream has delivered video PES packets: dismiss loading overlay
-        if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
-          el.loadingOverlay.classList.add('fade-out');
-        }
-        if (playerState.demuxer.stats.videoWidth && playerState.demuxer.stats.videoHeight) {
-          const w = playerState.demuxer.stats.videoWidth;
-          const h = playerState.demuxer.stats.videoHeight;
-          const fps = playerState.demuxer.stats.videoFps ? ` • ${playerState.demuxer.stats.videoFps} fps` : '';
-          if (el.hudResolution) {
-            el.hudResolution.textContent = `${w}x${h}${fps}`;
-          }
-        }
-        if (playerState.demuxer.stats.videoFps && el.hudFps) {
-          el.hudFps.textContent = playerState.demuxer.stats.videoFps.toString();
-        }
+      onVideoData: ({ pts, data }) => {
+        if (videoDecoder) videoDecoder.decodePES(data, pts);
       },
-      onAudioData: ({ pts, dts, data }) => {
-        if (playerState.demuxer.stats.audioSampleRate && el.hudAudioCodec) {
-          const sr = (playerState.demuxer.stats.audioSampleRate / 1000).toFixed(1) + ' kHz';
-          const ch = playerState.demuxer.stats.audioChannels ? ` (${playerState.demuxer.stats.audioChannels}ch)` : '';
-          el.hudAudioCodec.textContent = `AC-3 ${sr}${ch}`;
-        }
+      onAudioData: ({ pts, data }) => {
+        if (audioDecoder) audioDecoder.decodePES(data, pts);
       },
       onStats: (stats) => {
         const now = performance.now();
@@ -5029,34 +5187,23 @@ async function startPlayerStream(streamUrl) {
           const mbps = (dBytes * 8) / (dt * 1000000);
           playerState.lastStatsTime = now;
           playerState.lastStatsBytes = stats.bytesParsed;
-          if (el.hudBitrate) {
-            el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
-          }
-          if (el.hudDropped) {
-            el.hudDropped.textContent = stats.packetsDropped.toString();
-          }
+          if (el.hudBitrate) el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
+          if (el.hudDropped) el.hudDropped.textContent = stats.packetsDropped.toString();
           if (el.hudSync) {
             const sign = stats.avSkewMs >= 0 ? '+' : '';
             el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
           }
         }
       },
-      onError: (err) => {
-        console.warn('Demuxer error:', err);
-      }
+      onError: (err) => console.warn('Demuxer error:', err),
     });
   }
 
   try {
     const res = await fetch(streamUrl, { signal });
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-    }
-
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     const reader = res.body.getReader();
     playerState.streamReader = reader;
-
     while (playerState.isPlaying && playerState.isOpen) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -5065,20 +5212,11 @@ async function startPlayerStream(streamUrl) {
       }
     }
   } catch (err) {
-    if (signal.aborted) {
-      return; // Expected exit when stopping or switching channels
-    }
+    if (signal.aborted) return;
     console.error('Player streaming error:', err);
-    if (el.loadingText) {
-      el.loadingText.textContent = `Streaming error: ${err.message || err}`;
-    }
-    if (el.loadingOverlay) {
-      el.loadingOverlay.classList.remove('fade-out');
-    }
+    if (el.loadingText) el.loadingText.textContent = `Streaming error: ${err.message || err}`;
   } finally {
-    if (playerState.demuxer) {
-      playerState.demuxer.flush();
-    }
+    if (playerState.demuxer) playerState.demuxer.flush();
   }
 }
 
@@ -5149,10 +5287,37 @@ function togglePlayerRatio() {
 function initPlayerCanvas() {
   const el = getPlayerElements();
   if (!el.canvas) return;
-  const ctx = el.canvas.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = '#0a0d12';
-    ctx.fillRect(0, 0, el.canvas.width, el.canvas.height);
+
+  // 1. Initialize WebGL Video Renderer if not already created
+  if (!playerState.renderer && typeof WebGLVideoRenderer !== 'undefined') {
+    try {
+      playerState.renderer = new WebGLVideoRenderer(el.canvas);
+      playerState.renderer.clear();
+    } catch (glErr) {
+      console.warn('WebGL initialization failed:', glErr);
+    }
+  }
+
+  // 2. Initialize Web Audio Player if not already created
+  if (!playerState.audioPlayer && typeof WebAudioPlayer !== 'undefined') {
+    try {
+      playerState.audioPlayer = new WebAudioPlayer({
+        volume: playerState.volume,
+        isMuted: playerState.isMuted,
+      });
+    } catch (audioErr) {
+      console.warn('Web Audio initialization failed:', audioErr);
+    }
+  }
+
+  // 3. Initialize AV Synchronizer if not already created
+  if (!playerState.sync && typeof AVSynchronizer !== 'undefined' && playerState.renderer) {
+    playerState.sync = new AVSynchronizer(playerState.renderer, playerState.audioPlayer, {
+      onFrameStats: (stats) => {
+        if (el.hudFps) el.hudFps.textContent = stats.fps.toString();
+        if (el.hudDropped) el.hudDropped.textContent = stats.dropped.toString();
+      },
+    });
   }
 }
 
@@ -5188,6 +5353,9 @@ function setupPlayerEventListeners() {
   if (el.btnMute) {
     el.btnMute.addEventListener('click', () => {
       playerState.isMuted = !playerState.isMuted;
+      if (playerState.audioPlayer) {
+        playerState.audioPlayer.setMuted(playerState.isMuted);
+      }
       el.btnMute.textContent = playerState.isMuted ? '🔇' : '🔊';
       if (el.volumeSlider) {
         el.volumeSlider.value = playerState.isMuted ? 0 : playerState.volume;
@@ -5200,6 +5368,10 @@ function setupPlayerEventListeners() {
       const val = parseFloat(e.target.value);
       playerState.volume = val;
       playerState.isMuted = val === 0;
+      if (playerState.audioPlayer) {
+        playerState.audioPlayer.setVolume(val);
+        playerState.audioPlayer.setMuted(val === 0);
+      }
       if (el.btnMute) el.btnMute.textContent = val === 0 ? '🔇' : '🔊';
     });
   }
