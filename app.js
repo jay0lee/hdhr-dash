@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.92';
+const APP_VERSION = '2.0.93';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -5143,13 +5143,37 @@ async function startPlayerStream(streamUrl) {
             }
             break;
 
-          case 'VIDEO_FRAME':
-            // Dismiss loading overlay on first decoded video frame
+          case 'VIDEO_BATCH': {
+            // Dismiss loading overlay on first decoded video batch
             if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
               el.loadingOverlay.classList.add('fade-out');
             }
             if (el.hudResolution && msg.width && msg.height) {
               el.hudResolution.textContent = `${msg.width}x${msg.height}`;
+            }
+            if (playerState.sync && msg.yuvData && msg.frames) {
+              // Create zero-copy Uint8Array views into the transferred YUV blob
+              // for each frame's Y, U, V planes — no .slice() or allocation needed
+              for (let i = 0; i < msg.frames.length; i++) {
+                const f = msg.frames[i];
+                playerState.sync.queueVideoFrame({
+                  pts: f.pts,
+                  width: msg.width,
+                  height: msg.height,
+                  isInterlaced: msg.isInterlaced,
+                  y: new Uint8Array(msg.yuvData, f.offset, msg.yPlaneSize),
+                  u: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize, msg.uvPlaneSize),
+                  v: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize + msg.uvPlaneSize, msg.uvPlaneSize),
+                });
+              }
+            }
+            break;
+          }
+
+          case 'VIDEO_FRAME':
+            // Legacy per-frame handler (kept for cache transition compatibility)
+            if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
+              el.loadingOverlay.classList.add('fade-out');
             }
             if (playerState.sync) {
               playerState.sync.queueVideoFrame({
@@ -5164,7 +5188,36 @@ async function startPlayerStream(streamUrl) {
             }
             break;
 
+          case 'AUDIO_BATCH': {
+            // Batch audio: entire segment's decoded PCM in one transfer
+            if (playerState.audioPlayer && msg.left && msg.right) {
+              const left = new Float32Array(msg.left);
+              const right = new Float32Array(msg.right);
+              const SAMPLES_PER_CHUNK = 9600; // 200ms scheduling chunks
+              let curPts = msg.pts;
+              const sr = msg.sampleRate || 48000;
+
+              for (let s = 0; s < msg.totalSamples; s += SAMPLES_PER_CHUNK) {
+                const chunkLen = Math.min(SAMPLES_PER_CHUNK, msg.totalSamples - s);
+                playerState.audioPlayer.queueAudio(
+                  left.subarray(s, s + chunkLen),
+                  right.subarray(s, s + chunkLen),
+                  curPts,
+                  sr
+                );
+                curPts += chunkLen / sr;
+              }
+            }
+            if (el.hudAudioCodec && msg.sampleRate) {
+              const sr = (msg.sampleRate / 1000).toFixed(1) + ' kHz';
+              const ch = msg.channels ? ` (${msg.channels}ch)` : '';
+              el.hudAudioCodec.textContent = `AC-3 ${sr}${ch}`;
+            }
+            break;
+          }
+
           case 'AUDIO_FRAME':
+            // Legacy per-frame handler (kept for cache transition compatibility)
             if (playerState.audioPlayer) {
               playerState.audioPlayer.queueAudio(
                 msg.left,

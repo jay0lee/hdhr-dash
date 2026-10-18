@@ -578,6 +578,7 @@
 
       if (masterPts !== null) {
         // Synchronize video presentation to audio master clock
+        // Phase 1: Drain stale frames — find the latest presentable frame
         while (this.videoQueue.length > 0) {
           const next = this.videoQueue[0];
 
@@ -620,6 +621,18 @@
 
           // Frame is ready for display (within 40ms of master audio clock)
           if (delta <= 0.040) {
+            // Check if the NEXT frame is also already due — if so, skip this one
+            // to jump to the latest ready frame (avoids wasted GPU renders)
+            if (this.videoQueue.length > 1) {
+              const peek = this.videoQueue[1];
+              if (peek.pts !== null && !isNaN(peek.pts) && (peek.pts - masterPts) <= 0.005) {
+                // Next frame is also past its due time — skip this one
+                this.videoQueue.shift();
+                this.droppedFrames++;
+                continue;
+              }
+            }
+
             const frame = this.videoQueue.shift();
             this.renderer.renderFrame(
               frame.y,
@@ -634,7 +647,7 @@
             break;
           }
 
-          // Frame is ahead of audio clock (delta > 35ms): hold until audio catches up
+          // Frame is ahead of audio clock (delta > 40ms): hold until audio catches up
           break;
         }
       } else if (this.videoQueue.length > 0) {

@@ -252,6 +252,7 @@ async function initCore() {
 
 function processSegment() {
   if (!core || streamBufferBytes === 0) return;
+  const tStart = performance.now();
 
   const headerLen = savedHeader ? savedHeader.length : 0;
   const merged = new Uint8Array(headerLen + streamBufferBytes);
@@ -277,9 +278,14 @@ function processSegment() {
   try {
     try {
       core.FS.writeFile(inName, merged);
+      const tDecode = performance.now();
 
       runFFmpeg([
+        '-probesize', '32768',
+        '-analyzeduration', '0',
+        '-fflags', '+nobuffer+fastseek',
         '-i', inName,
+        '-threads', '1',
         '-vsync', '0',
         '-f', 'rawvideo',
         '-pix_fmt', 'yuv420p',
@@ -289,6 +295,7 @@ function processSegment() {
         '-ar', '48000',
         pcmName
       ]);
+      const tAfterDecode = performance.now();
 
       try { yuv = core.FS.readFile(yuvName); } catch (e) {}
       try { pcm = core.FS.readFile(pcmName); } catch (e) {}
@@ -317,86 +324,80 @@ function processSegment() {
 
     const frameDur = 1.0 / videoFps;
 
-    // 1. Process and transfer decoded 48 kHz stereo Float32 PCM audio FIRST
-    // so master audio clock is updated BEFORE video frames are evaluated by the renderer
+    // 1. BATCH AUDIO TRANSFER — single bulk de-interleave + single postMessage
+    // (replaces 5 separate chunked loops + 5 postMessage calls with 1 of each)
     if (pcm && pcm.length > 0) {
       const f32 = new Float32Array(pcm.buffer, pcm.byteOffset, pcm.byteLength / 4);
       const totalStereoSamples = Math.floor(f32.length / 2);
-      const SAMPLES_PER_CHUNK = 9600; // 200ms audio chunk (seamless Web Audio playback)
 
-      let curAudioPts = segAudioStart;
-
-      for (let s = 0; s < totalStereoSamples; s += SAMPLES_PER_CHUNK) {
-        const chunkLen = Math.min(SAMPLES_PER_CHUNK, totalStereoSamples - s);
-        const leftArr = new Float32Array(chunkLen);
-        const rightArr = new Float32Array(chunkLen);
-
-        for (let i = 0; i < chunkLen; i++) {
-          leftArr[i] = f32[(s + i) * 2];
-          rightArr[i] = f32[(s + i) * 2 + 1];
-        }
-
-        self.postMessage(
-          {
-            type: 'AUDIO_FRAME',
-            pts: curAudioPts,
-            sampleRate: 48000,
-            channels: 2,
-            left: leftArr.buffer,
-            right: rightArr.buffer,
-          },
-          [leftArr.buffer, rightArr.buffer]
-        );
-
-        curAudioPts += chunkLen / 48000;
+      // Single bulk de-interleave: LRLRLR → separate L and R channels
+      const left = new Float32Array(totalStereoSamples);
+      const right = new Float32Array(totalStereoSamples);
+      for (let i = 0; i < totalStereoSamples; i++) {
+        left[i] = f32[i * 2];
+        right[i] = f32[i * 2 + 1];
       }
-      streamAudioPts = curAudioPts;
+
+      self.postMessage({
+        type: 'AUDIO_BATCH',
+        pts: segAudioStart,
+        sampleRate: 48000,
+        channels: 2,
+        totalSamples: totalStereoSamples,
+        left: left.buffer,
+        right: right.buffer,
+      }, [left.buffer, right.buffer]);
+
+      streamAudioPts = segAudioStart + totalStereoSamples / 48000;
     }
 
-    // 2. Process and transfer decoded YUV420P video frames
+    // 2. BATCH VIDEO TRANSFER — zero extra .slice() copies, single Transferable postMessage
+    // (replaces 30 separate .slice() + postMessage calls with 1 transfer of the entire YUV blob)
+    let numFrames = 0;
     if (yuv && yuv.length > 0) {
       const frameBytes = videoWidth * videoHeight * 1.5;
-      const numFrames = Math.floor(yuv.length / frameBytes);
+      numFrames = Math.floor(yuv.length / frameBytes);
       const yPlaneSize = videoWidth * videoHeight;
       const uvPlaneSize = (videoWidth >> 1) * (videoHeight >> 1);
 
+      const frames = new Array(numFrames);
       let curVideoPts = segVideoStart;
-
       for (let f = 0; f < numFrames; f++) {
-        const frameOffset = f * frameBytes;
-        const yData = yuv.subarray(frameOffset, frameOffset + yPlaneSize);
-        const uData = yuv.subarray(frameOffset + yPlaneSize, frameOffset + yPlaneSize + uvPlaneSize);
-        const vData = yuv.subarray(frameOffset + yPlaneSize + uvPlaneSize, frameOffset + frameBytes);
-
-        // Fast native slice to standalone Transferable buffers
-        const yBuf = yData.slice().buffer;
-        const uBuf = uData.slice().buffer;
-        const vBuf = vData.slice().buffer;
-
-        self.postMessage(
-          {
-            type: 'VIDEO_FRAME',
-            pts: curVideoPts,
-            width: videoWidth,
-            height: videoHeight,
-            isInterlaced,
-            y: yBuf,
-            u: uBuf,
-            v: vBuf,
-          },
-          [yBuf, uBuf, vBuf]
-        );
-
+        frames[f] = { pts: curVideoPts, offset: f * frameBytes };
         curVideoPts += frameDur;
       }
+
+      // Transfer entire YUV blob in ONE postMessage — zero .slice() copies
+      let yuvBuffer = yuv.buffer;
+      // Handle edge case where readFile returns a view into a larger buffer
+      if (yuv.byteOffset !== 0 || yuv.buffer.byteLength !== yuv.byteLength) {
+        yuvBuffer = yuv.slice().buffer;
+      }
+
+      self.postMessage({
+        type: 'VIDEO_BATCH',
+        frames,
+        width: videoWidth,
+        height: videoHeight,
+        isInterlaced,
+        yPlaneSize,
+        uvPlaneSize,
+        frameBytes,
+        yuvData: yuvBuffer,
+      }, [yuvBuffer]);
+
       streamVideoPts = curVideoPts;
     }
 
-    const vidDur = (yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0) * frameDur;
+    const tEnd = performance.now();
+    const vidDur = numFrames * frameDur;
     const audDur = (pcm ? Math.floor(pcm.length / 8) : 0) / 48000;
+    const decodeMs = (tAfterDecode - tDecode).toFixed(0);
+    const totalMs = (tEnd - tStart).toFixed(0);
+    const ratio = vidDur > 0 ? ((tAfterDecode - tDecode) / (vidDur * 1000) * 100).toFixed(0) : '?';
     self.postMessage({
       type: 'WORKER_LOG',
-      text: `SEGMENT #${segmentIndex}: bytes=${merged.length} fps=${videoFps.toFixed(2)} vidFrames=${yuv ? Math.floor(yuv.length / (videoWidth * videoHeight * 1.5)) : 0} (${vidDur.toFixed(3)}s) audSamples=${pcm ? Math.floor(pcm.length / 8) : 0} (${audDur.toFixed(3)}s)`
+      text: `SEG#${segmentIndex}: ${merged.length}B fps=${videoFps.toFixed(2)} ${numFrames}f (${vidDur.toFixed(3)}s) aud=${audDur.toFixed(3)}s | decode=${decodeMs}ms total=${totalMs}ms (${ratio}% RT)`
     });
   } catch (err) {
     self.postMessage({ type: 'WORKER_LOG', text: 'SEGMENT_ERROR: ' + err.message + ' | ' + (err.stack || '') });
