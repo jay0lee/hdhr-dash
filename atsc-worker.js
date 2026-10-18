@@ -281,10 +281,11 @@ function processSegment() {
       core.FS.writeFile(inName, merged);
       tDecode = performance.now();
 
-      // Adaptive probesize: 512KB for initial stream detection, 64KB after savedHeader
-      // is captured (PAT+PMT+SeqHdr prepended = FFmpeg knows the stream format already)
-      const probeSize = savedHeader ? '65536' : '524288';
-      const analyzeDur = savedHeader ? '100000' : '500000';
+      // Adaptive probesize: 512KB for initial stream detection, 256KB after savedHeader
+      // is captured (PAT+PMT+SeqHdr prepended = FFmpeg needs less probing, but still
+      // needs enough to find AC-3 audio syncframes which may not be in the first 64KB)
+      const probeSize = savedHeader ? '262144' : '524288';
+      const analyzeDur = savedHeader ? '300000' : '500000';
 
       runFFmpeg([
         '-probesize', probeSize,
