@@ -284,8 +284,8 @@ function processSegment() {
       tDecode = performance.now();
 
       runFFmpeg([
-        '-probesize', '32768',
-        '-analyzeduration', '0',
+        '-probesize', '524288',
+        '-analyzeduration', '500000',
         '-fflags', '+nobuffer+fastseek',
         '-i', inName,
         '-threads', '1',
