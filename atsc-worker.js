@@ -275,10 +275,13 @@ function processSegment() {
   let yuv = null;
   let pcm = null;
 
+  let tDecode = performance.now();
+  let tAfterDecode = tDecode;
+
   try {
     try {
       core.FS.writeFile(inName, merged);
-      const tDecode = performance.now();
+      tDecode = performance.now();
 
       runFFmpeg([
         '-probesize', '32768',
@@ -295,7 +298,7 @@ function processSegment() {
         '-ar', '48000',
         pcmName
       ]);
-      const tAfterDecode = performance.now();
+      tAfterDecode = performance.now();
 
       try { yuv = core.FS.readFile(yuvName); } catch (e) {}
       try { pcm = core.FS.readFile(pcmName); } catch (e) {}
