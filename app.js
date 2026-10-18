@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.95';
+const APP_VERSION = '2.0.96';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -5133,9 +5133,21 @@ async function startPlayerStream(streamUrl) {
             break;
 
           case 'VIDEO_BATCH': {
-            // Dismiss loading overlay on first decoded video batch
+            // Show buffering progress during deep buffer pre-fill phase
             if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
-              el.loadingOverlay.classList.add('fade-out');
+              if (playerState.audioPlayer && playerState.audioPlayer.context) {
+                const ctx = playerState.audioPlayer.context;
+                const nextPlay = playerState.audioPlayer.nextPlayTime;
+                const buffered = nextPlay - ctx.currentTime;
+                if (buffered > 0 && el.loadingText) {
+                  const pct = Math.min(100, Math.round(buffered / 10.0 * 100));
+                  el.loadingText.textContent = `Buffering... ${pct}%`;
+                }
+                // Dismiss loading overlay once audio starts playing (buffer full)
+                if (ctx.currentTime >= playerState.audioPlayer.scheduledChunks[0]?.startTime) {
+                  el.loadingOverlay.classList.add('fade-out');
+                }
+              }
             }
             if (el.hudResolution && msg.width && msg.height) {
               el.hudResolution.textContent = `${msg.width}x${msg.height}`;

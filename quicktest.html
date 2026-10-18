@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html>
-<head><title>v2.0.95 Performance Test</title></head>
+<head><title>v2.0.96 Performance Test</title></head>
 <body>
 <script src="atsc-demuxer.js"></script>
 <script src="player-renderer.js"></script>
@@ -36,7 +36,7 @@ async function testChannel(ch) {
     sync.start();
 
     // Create worker
-    const worker = new Worker('atsc-worker.js?v=2.0.95');
+    const worker = new Worker('atsc-worker.js?v=2.0.96');
     worker.onmessage = (e) => {
       const msg = e.data;
       if (!msg) return;

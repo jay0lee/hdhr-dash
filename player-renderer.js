@@ -370,25 +370,28 @@
         this.context.resume().catch(() => {});
       }
 
-      // Target jitter cushion: 600ms initial pre-buffering absorbs decode pipeline
-      // latency for all GOP sizes while keeping tune-in time under 1 second
-      const INITIAL_CUSHION = 0.600;
+      // Deep playback buffer: pre-fill 10 seconds of decoded audio before starting output.
+      // With 5× decode headroom (18% RT), the buffer stays full indefinitely.
+      // This absorbs ALL jitter — GC pauses, network hiccups, large GOPs, segment
+      // boundaries — making playback indistinguishable from a native TV player.
+      // Trade-off: ~10 second delay behind live broadcast (acceptable for OTA TV).
+      const INITIAL_CUSHION = 10.0;
 
       let startTime = this.nextPlayTime;
       const isInitial = this.scheduledChunks.length === 0;
       const isUnderflow = !startTime || startTime < curTime;
-      const isOverAccumulated = startTime > curTime + 4.0;
+      const isOverAccumulated = startTime > curTime + 20.0;
 
       if (isInitial) {
-        // Instant tuning startup
+        // Buffer fill: schedule first audio 10s in the future
         startTime = curTime + INITIAL_CUSHION;
       } else if (isUnderflow) {
         // Zero-gap underflow recovery: schedule immediately at current time
         // Web Audio API handles past-time scheduling correctly — no silence insertion needed
         startTime = curTime;
       } else if (isOverAccumulated) {
-        // Clamp excessive queue accumulation if worker raced ahead
-        startTime = curTime + 0.800;
+        // Clamp excessive queue accumulation if decode raced too far ahead
+        startTime = curTime + 12.0;
       }
 
       this.nextPlayTime = startTime + duration;
@@ -563,8 +566,8 @@
 
     queueVideoFrame(frame) {
       this.videoQueue.push(frame);
-      // Keep queue bounded to prevent memory growth (480 frames = 8s at 60fps / 16s at 30fps)
-      if (this.videoQueue.length > 480) {
+      // Keep queue bounded to prevent memory growth (900 frames = 15s at 60fps / 30s at 30fps)
+      if (this.videoQueue.length > 900) {
         this.videoQueue.shift();
         this.droppedFrames++;
       }
