@@ -442,6 +442,17 @@
     }
 
     /**
+     * Check if audio is in the deep buffer cushion phase (pre-fill before playback starts).
+     * During this phase, the interpolated master clock PTS is artificially low relative to
+     * actual video/audio PTS, which would cause the discontinuity detector (|delta| > 3.0s)
+     * to silently discard every video frame. Video rendering must be held until audio starts.
+     */
+    isInCushion() {
+      if (!this.context || this.scheduledChunks.length === 0) return false;
+      return this.context.currentTime < this.scheduledChunks[0].startTime;
+    }
+
+    /**
      * Current master clock time in presentation seconds.
      * Evaluates against the audio chunk currently emitting from the output device.
      */
@@ -576,6 +587,17 @@
     renderLoop(timestamp) {
       if (!this.isRunning) return;
       this.lastRenderLoopTime = performance.now();
+
+      // During deep buffer cushion (pre-fill phase), hold all video frames.
+      // The interpolated master clock PTS is ~10s behind actual video PTS during this
+      // phase, which would trigger the discontinuity detector and silently discard
+      // every frame. Wait until audio actually starts playing from the speakers.
+      if (this.audio && this.audio.isInCushion && this.audio.isInCushion()) {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          this.animId = requestAnimationFrame(this.renderLoopBound);
+        }
+        return;
+      }
 
       const masterPts = this.audio ? this.audio.getMasterClockPts() : null;
 

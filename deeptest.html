@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head><title>v2.0.96 Deep Buffer Validation</title></head>
+<body>
+<canvas id="c" width="1920" height="1080" style="width:960px;height:540px"></canvas>
+<pre id="log" style="font:12px monospace;white-space:pre-wrap;max-height:400px;overflow:auto"></pre>
+<script src="atsc-demuxer.js"></script>
+<script src="player-renderer.js"></script>
+<script>
+// Deep buffer validation test — single channel, 60 seconds
+// Designed for both headless CDP testing and visual browser testing
+const CHANNEL = '10.1';
+const DURATION = 60000; // 60 seconds
+const HDHR = 'http://10.1.0.4:5004/auto/v';
+
+function log(msg) {
+  const el = document.getElementById('log');
+  const ts = ((performance.now() / 1000) | 0) + 's';
+  const line = `[${ts}] ${msg}`;
+  if (el) el.textContent += line + '\n';
+  console.log(line);
+}
+
+// Exposed globals for CDP monitoring
+window.T = {
+  phase: 'init',       // init -> buffering -> playing -> done
+  bufferSec: 0,        // seconds of audio buffered ahead
+  bufferPct: 0,        // buffer fill percentage (0-100)
+  rendered: 0,
+  dropped: 0,
+  fps: 0,
+  queueDepth: 0,       // video queue size
+  segments: 0,
+  zeroFrameSegs: 0,
+  audioStarved: false,
+  masterPts: null,
+  errors: [],
+  segLogs: [],
+  // Periodic snapshots for analysis
+  snapshots: []
+};
+
+(async () => {
+  const canvas = document.getElementById('c');
+  const renderer = new WebGLVideoRenderer(canvas);
+  const audio = new WebAudioPlayer({ volume: 0.5 });
+  window.testAudio = audio; // Expose for CDP
+
+  const sync = new AVSynchronizer(renderer, audio, {
+    onFrameStats: (s) => {
+      window.T.fps = s.fps;
+      window.T.rendered = s.rendered;
+      window.T.dropped = s.dropped;
+    }
+  });
+  window.testSync = sync; // Expose for CDP
+  sync.start();
+
+  log(`Starting deep buffer test: ch ${CHANNEL}, ${DURATION/1000}s`);
+  window.T.phase = 'buffering';
+
+  const worker = new Worker('atsc-worker.js?v=2.0.96');
+  let segCount = 0, zeroFrames = 0;
+
+  worker.onmessage = (e) => {
+    const msg = e.data;
+    if (!msg) return;
+
+    switch (msg.type) {
+      case 'VIDEO_BATCH':
+        if (msg.yuvData && msg.frames) {
+          for (let i = 0; i < msg.frames.length; i++) {
+            const f = msg.frames[i];
+            sync.queueVideoFrame({
+              pts: f.pts, width: msg.width, height: msg.height,
+              isInterlaced: msg.isInterlaced,
+              y: new Uint8Array(msg.yuvData, f.offset, msg.yPlaneSize),
+              u: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize, msg.uvPlaneSize),
+              v: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize + msg.uvPlaneSize, msg.uvPlaneSize),
+            });
+          }
+        }
+        window.T.queueDepth = sync.videoQueue.length;
+        break;
+
+      case 'AUDIO_BATCH':
+        if (msg.left && msg.right) {
+          const left = new Float32Array(msg.left);
+          const right = new Float32Array(msg.right);
+          const CHUNK = 9600;
+          let pts = msg.pts;
+          const sr = msg.sampleRate || 48000;
+          for (let s = 0; s < msg.totalSamples; s += CHUNK) {
+            const len = Math.min(CHUNK, msg.totalSamples - s);
+            audio.queueAudio(left.subarray(s, s + len), right.subarray(s, s + len), pts, sr);
+            pts += len / sr;
+          }
+        }
+        break;
+
+      case 'WORKER_LOG':
+        if (msg.text) {
+          segCount++;
+          window.T.segments = segCount;
+          window.T.segLogs.push(msg.text);
+          // Check for zero-frame segments
+          if (msg.text.includes(' 0f ')) {
+            zeroFrames++;
+            window.T.zeroFrameSegs = zeroFrames;
+            log(`⚠️ ZERO-FRAME segment #${segCount}: ${msg.text}`);
+          }
+        }
+        break;
+
+      case 'ERROR':
+        window.T.errors.push(msg.message);
+        log(`❌ ERROR: ${msg.message}`);
+        break;
+    }
+  };
+
+  worker.postMessage({ type: 'INIT' });
+
+  // Periodic monitoring — take snapshots every 2 seconds
+  const monitorInterval = setInterval(() => {
+    if (!audio.context) return;
+    const ctx = audio.context;
+    const nextPlay = audio.nextPlayTime;
+    const buffered = nextPlay - ctx.currentTime;
+    const masterPts = audio.getMasterClockPts();
+    const starved = audio.isStarved();
+    const firstChunkStart = audio.scheduledChunks.length > 0 ? audio.scheduledChunks[0].startTime : null;
+    const playbackStarted = firstChunkStart !== null && ctx.currentTime >= firstChunkStart;
+
+    window.T.bufferSec = Math.round(buffered * 10) / 10;
+    window.T.bufferPct = Math.min(100, Math.round(Math.max(0, buffered) / 10.0 * 100));
+    window.T.audioStarved = starved;
+    window.T.masterPts = masterPts;
+
+    if (!playbackStarted && window.T.phase === 'buffering') {
+      log(`📦 Buffering: ${window.T.bufferPct}% (${window.T.bufferSec}s ahead) | queue=${sync.videoQueue.length} segs=${segCount}`);
+    } else if (playbackStarted && window.T.phase !== 'playing') {
+      window.T.phase = 'playing';
+      log(`▶️ PLAYBACK STARTED! Buffer=${window.T.bufferSec}s | queue=${sync.videoQueue.length}`);
+    }
+
+    if (window.T.phase === 'playing') {
+      log(`🎬 fps=${window.T.fps} rendered=${sync.renderedFrames} dropped=${sync.droppedFrames} queue=${sync.videoQueue.length} buf=${window.T.bufferSec}s starved=${starved}`);
+    }
+
+    // Take snapshot
+    window.T.snapshots.push({
+      t: Math.round(performance.now() / 1000),
+      phase: window.T.phase,
+      bufSec: window.T.bufferSec,
+      rendered: sync.renderedFrames,
+      dropped: sync.droppedFrames,
+      fps: window.T.fps,
+      queue: sync.videoQueue.length,
+      starved: starved
+    });
+  }, 2000);
+
+  // Stream data
+  const ctrl = new AbortController();
+  try {
+    const res = await fetch(HDHR + CHANNEL, { signal: ctrl.signal });
+    const reader = res.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.byteLength > 0) {
+        let buf = value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
+          ? value.buffer : value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        worker.postMessage({ type: 'CHUNK', chunk: buf }, [buf]);
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') log(`Stream error: ${e.message}`);
+  }
+
+  // Stop after DURATION
+  setTimeout(() => {
+    ctrl.abort();
+    worker.postMessage({ type: 'FLUSH' });
+    clearInterval(monitorInterval);
+
+    setTimeout(() => {
+      worker.terminate();
+      sync.stop();
+      window.T.phase = 'done';
+
+      // Final report
+      const dropRate = sync.renderedFrames > 0
+        ? Math.round(sync.droppedFrames / (sync.renderedFrames + sync.droppedFrames) * 1000) / 10
+        : 0;
+
+      log('\n=== DEEP BUFFER TEST RESULTS ===');
+      log(`Channel: ${CHANNEL}`);
+      log(`Segments decoded: ${segCount} (${zeroFrames} zero-frame)`);
+      log(`Frames rendered: ${sync.renderedFrames}`);
+      log(`Frames dropped: ${sync.droppedFrames} (${dropRate}%)`);
+      log(`Final FPS: ${window.T.fps}`);
+      log(`Final queue depth: ${sync.videoQueue.length}`);
+      log(`Final buffer: ${window.T.bufferSec}s`);
+      log(`Audio starved: ${window.T.audioStarved}`);
+      log(`Errors: ${window.T.errors.length}`);
+
+      const verdict = sync.renderedFrames > 500 && dropRate < 5 && zeroFrames === 0;
+      log(`\nVERDICT: ${verdict ? 'PASS ✅' : 'FAIL ❌'}`);
+      if (!verdict) {
+        if (sync.renderedFrames <= 500) log('  → Too few frames rendered');
+        if (dropRate >= 5) log('  → Drop rate too high');
+        if (zeroFrames > 0) log('  → Had zero-frame segments');
+      }
+
+      window.T.verdict = verdict ? 'PASS' : 'FAIL';
+    }, 1500);
+  }, DURATION);
+})();
+</script>
+</body>
+</html>
