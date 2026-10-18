@@ -370,9 +370,9 @@
         this.context.resume().catch(() => {});
       }
 
-      // Target jitter cushion: 350ms initial pre-buffering provides near-instant tuning
-      // while absorbing network packet arrival variance
-      const INITIAL_CUSHION = 0.350;
+      // Target jitter cushion: 600ms initial pre-buffering absorbs decode pipeline
+      // latency for all GOP sizes while keeping tune-in time under 1 second
+      const INITIAL_CUSHION = 0.600;
 
       let startTime = this.nextPlayTime;
       const isInitial = this.scheduledChunks.length === 0;
@@ -383,9 +383,9 @@
         // Instant tuning startup
         startTime = curTime + INITIAL_CUSHION;
       } else if (isUnderflow) {
-        // Fast underflow recovery: resume playback immediately with a tiny 40ms safety margin
-        // Do NOT insert a massive 1.8s silence freeze
-        startTime = curTime + 0.040;
+        // Zero-gap underflow recovery: schedule immediately at current time
+        // Web Audio API handles past-time scheduling correctly — no silence insertion needed
+        startTime = curTime;
       } else if (isOverAccumulated) {
         // Clamp excessive queue accumulation if worker raced ahead
         startTime = curTime + 0.800;
@@ -621,12 +621,12 @@
 
           // Frame is ready for display (within 40ms of master audio clock)
           if (delta <= 0.040) {
-            // Check if the NEXT frame is also already due — if so, skip this one
+            // Check if the NEXT frame is also already overdue — if so, skip this one
             // to jump to the latest ready frame (avoids wasted GPU renders)
             if (this.videoQueue.length > 1) {
               const peek = this.videoQueue[1];
-              if (peek.pts !== null && !isNaN(peek.pts) && (peek.pts - masterPts) <= 0.005) {
-                // Next frame is also past its due time — skip this one
+              if (peek.pts !== null && !isNaN(peek.pts) && (peek.pts - masterPts) <= -0.010) {
+                // Next frame is already 10ms+ overdue — skip this stale frame
                 this.videoQueue.shift();
                 this.droppedFrames++;
                 continue;

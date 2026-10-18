@@ -281,9 +281,14 @@ function processSegment() {
       core.FS.writeFile(inName, merged);
       tDecode = performance.now();
 
+      // Adaptive probesize: 512KB for initial stream detection, 64KB after savedHeader
+      // is captured (PAT+PMT+SeqHdr prepended = FFmpeg knows the stream format already)
+      const probeSize = savedHeader ? '65536' : '524288';
+      const analyzeDur = savedHeader ? '100000' : '500000';
+
       runFFmpeg([
-        '-probesize', '524288',
-        '-analyzeduration', '500000',
+        '-probesize', probeSize,
+        '-analyzeduration', analyzeDur,
         '-fflags', '+nobuffer+fastseek',
         '-i', inName,
         '-threads', '1',
@@ -552,8 +557,9 @@ self.onmessage = function (e) {
           streamBufferBytes += uint8.length;
         }
 
-        // Fallback for streams without detected sequence headers: flush at 2.5MB
-        if (core && streamBufferBytes >= 2500000) {
+        // Mid-GOP fallback: force decode at 800KB even without a new sequence header
+        // Prevents large GOPs (e.g. CBS 3.1 = 2MB) from starving the audio pipeline
+        if (core && streamBufferBytes >= 800000) {
           processSegment();
         }
       }

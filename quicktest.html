@@ -1,111 +1,141 @@
 <!DOCTYPE html>
-<html><head><title>TESTING</title></head>
+<html>
+<head><title>v2.0.95 Performance Test</title></head>
 <body>
-<canvas id="pc" width="1920" height="1080" style="display:none"></canvas>
-<script src="atsc-demuxer.js?v=2.0.93"></script>
-<script src="player-renderer.js?v=2.0.93"></script>
+<script src="atsc-demuxer.js"></script>
+<script src="player-renderer.js"></script>
 <script>
-window.T = { segs: [], err: null, rendered: 0, dropped: 0, fps: 0, done: false, ch: '', queue: 0 };
-var HDHR = '10.1.0.4';
+// Headless multi-channel decode performance test
+// Tests: 10.1, 12.1, 3.1, 29.1 — 30 seconds each
+const CHANNELS = ['10.1', '12.1', '3.1', '29.1'];
+const DURATION = 30000; // 30s per channel
+const HDHR = 'http://10.1.0.4:5004/auto/v';
 
-function testChannel(ch, durSec) {
-  return new Promise(function(resolve) {
-    window.T = { segs: [], err: null, rendered: 0, dropped: 0, fps: 0, done: false, ch: ch, queue: 0 };
-    var r, ap, sy;
-    try {
-      var c = document.getElementById('pc');
-      try { r = new WebGLVideoRenderer(c); } catch(e) {
-        r = { renderFrame: function(){}, clear: function(){} };
+window.T = { ch: '', segs: [], rendered: 0, dropped: 0, fps: 0, queue: 0, err: '' };
+window.allResults = [];
+window.benchDone = false;
+
+async function testChannel(ch) {
+  return new Promise(async (resolve) => {
+    const result = { ch, rendered: 0, dropped: 0, fps: 0, rate: 0, segs: [] };
+    window.T = { ch, segs: [], rendered: 0, dropped: 0, fps: 0, queue: 0, err: '' };
+
+    // Create canvas + renderer
+    const canvas = document.createElement('canvas');
+    canvas.width = 1920; canvas.height = 1080;
+    document.body.appendChild(canvas);
+    const renderer = new WebGLVideoRenderer(canvas);
+    const audio = new WebAudioPlayer({ volume: 0 });
+    const sync = new AVSynchronizer(renderer, audio, {
+      onFrameStats: (s) => {
+        window.T.fps = s.fps;
+        window.T.rendered = s.rendered;
+        window.T.dropped = s.dropped;
       }
-      ap = new WebAudioPlayer({ sampleRate: 48000 });
-      sy = new AVSynchronizer(r, ap);
-    } catch(e) { window.T.err = e.message; resolve(); return; }
+    });
+    sync.start();
 
-    var w = new Worker('atsc-worker.js?v=2.0.93');
-    var aborted = false;
-    w.onmessage = function(e) {
-      var m = e.data; if (!m) return;
-      if (m.type === 'READY') { try{ap.resume();}catch(x){} sy.start(); }
-      else if (m.type === 'VIDEO_BATCH') {
-        if (m.yuvData && m.frames) {
-          for (var i = 0; i < m.frames.length; i++) {
-            var f = m.frames[i];
-            sy.queueVideoFrame({
-              pts: f.pts, width: m.width, height: m.height, isInterlaced: m.isInterlaced,
-              y: new Uint8Array(m.yuvData, f.offset, m.yPlaneSize),
-              u: new Uint8Array(m.yuvData, f.offset + m.yPlaneSize, m.uvPlaneSize),
-              v: new Uint8Array(m.yuvData, f.offset + m.yPlaneSize + m.uvPlaneSize, m.uvPlaneSize)
-            });
+    // Create worker
+    const worker = new Worker('atsc-worker.js?v=2.0.95');
+    worker.onmessage = (e) => {
+      const msg = e.data;
+      if (!msg) return;
+
+      switch (msg.type) {
+        case 'VIDEO_BATCH':
+          if (msg.yuvData && msg.frames) {
+            for (let i = 0; i < msg.frames.length; i++) {
+              const f = msg.frames[i];
+              sync.queueVideoFrame({
+                pts: f.pts, width: msg.width, height: msg.height,
+                isInterlaced: msg.isInterlaced,
+                y: new Uint8Array(msg.yuvData, f.offset, msg.yPlaneSize),
+                u: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize, msg.uvPlaneSize),
+                v: new Uint8Array(msg.yuvData, f.offset + msg.yPlaneSize + msg.uvPlaneSize, msg.uvPlaneSize),
+              });
+            }
           }
-        }
-      } else if (m.type === 'AUDIO_BATCH') {
-        if (m.left && m.right) {
-          var l = new Float32Array(m.left), ri = new Float32Array(m.right);
-          var pts = m.pts, sr = m.sampleRate || 48000;
-          for (var s = 0; s < m.totalSamples; s += 9600) {
-            var len = Math.min(9600, m.totalSamples - s);
-            ap.queueAudio(l.subarray(s,s+len), ri.subarray(s,s+len), pts, sr);
-            pts += len / sr;
+          window.T.queue = sync.videoQueue.length;
+          break;
+        case 'AUDIO_BATCH':
+          if (msg.left && msg.right) {
+            const left = new Float32Array(msg.left);
+            const right = new Float32Array(msg.right);
+            const CHUNK = 9600;
+            let pts = msg.pts;
+            const sr = msg.sampleRate || 48000;
+            for (let s = 0; s < msg.totalSamples; s += CHUNK) {
+              const len = Math.min(CHUNK, msg.totalSamples - s);
+              audio.queueAudio(left.subarray(s, s + len), right.subarray(s, s + len), pts, sr);
+              pts += len / sr;
+            }
           }
-        }
-      } else if (m.type === 'WORKER_LOG') {
-        window.T.segs.push(m.text);
-      } else if (m.type === 'ERROR') {
-        window.T.err = m.message;
+          break;
+        case 'WORKER_LOG':
+          if (msg.text) {
+            window.T.segs.push(msg.text);
+            result.segs.push(msg.text);
+          }
+          break;
+        case 'ERROR':
+          window.T.err = msg.message;
+          break;
       }
     };
-    w.postMessage({ type: 'INIT' });
+    worker.postMessage({ type: 'INIT' });
 
-    var ctrl = new AbortController();
-    fetch('http://' + HDHR + ':5004/auto/v' + ch, {signal: ctrl.signal}).then(function(res) {
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      var rd = res.body.getReader();
-      function pump() {
-        rd.read().then(function(r) {
-          if (r.done || aborted) return;
-          if (r.value && r.value.byteLength > 0) {
-            var b = r.value.byteOffset===0 && r.value.byteLength===r.value.buffer.byteLength
-              ? r.value.buffer : r.value.buffer.slice(r.value.byteOffset, r.value.byteOffset+r.value.byteLength);
-            w.postMessage({type:'CHUNK',chunk:b},[b]);
-          }
-          pump();
-        }).catch(function(){});
-      }
-      pump();
-    }).catch(function(e) { if (!aborted) window.T.err = e.message; });
-
-    setTimeout(function() {
-      aborted = true;
+    // Stream data
+    const url = HDHR + ch;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => {
       ctrl.abort();
-      w.postMessage({type:'FLUSH'});
-      setTimeout(function() {
-        window.T.rendered = sy.renderedFrames;
-        window.T.dropped = sy.droppedFrames;
-        window.T.fps = sy.fps;
-        window.T.queue = sy.videoQueue.length;
-        window.T.done = true;
-        sy.stop(); ap.reset(); w.postMessage({type:'STOP'}); w.terminate();
-        resolve();
+      worker.postMessage({ type: 'FLUSH' });
+      setTimeout(() => {
+        worker.terminate();
+        sync.stop();
+        result.rendered = sync.renderedFrames;
+        result.dropped = sync.droppedFrames;
+        result.fps = sync.fps;
+        const dur = DURATION / 1000;
+        result.rate = dur > 0 ? Math.round(result.rendered / (dur * 30) * 100) : 0;
+        canvas.remove();
+        resolve(result);
       }, 1000);
-    }, durSec * 1000);
+    }, DURATION);
+
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      const reader = res.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) {
+          let buf = value.byteOffset === 0 && value.byteLength === value.buffer.byteLength
+            ? value.buffer : value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+          worker.postMessage({ type: 'CHUNK', chunk: buf }, [buf]);
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') window.T.err = e.message;
+    }
   });
 }
 
-async function run() {
-  var channels = ['10.1', '12.1', '3.1', '29.1'];
-  var dur = 30;
-  window.allResults = [];
-  for (var i = 0; i < channels.length; i++) {
-    await testChannel(channels[i], dur);
-    var r = window.T.rendered, d = window.T.dropped;
-    var rate = r+d > 0 ? ((r/(r+d))*100).toFixed(1) : '0';
-    window.allResults.push({ch:channels[i], rendered:r, dropped:d, rate:rate, fps:window.T.fps, segs:window.T.segs.slice(), err:window.T.err, queue:window.T.queue});
-    await new Promise(function(r){setTimeout(r,2000)});
+(async () => {
+  for (const ch of CHANNELS) {
+    const result = await testChannel(ch);
+    window.allResults.push(result);
+    console.log(`${ch}: rendered=${result.rendered} dropped=${result.dropped} fps=${result.fps}`);
   }
   window.benchDone = true;
-  document.title = 'BENCH_DONE';
-}
-run();
+  console.log('BENCHMARK COMPLETE', JSON.stringify(window.allResults.map(r => ({
+    ch: r.ch, rendered: r.rendered, dropped: r.dropped, fps: r.fps, rate: r.rate,
+    segs: r.segs.length
+  }))));
+})();
+</script>
+</body>
+</html>
 </script>
 </body>
 </html>
