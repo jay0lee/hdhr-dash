@@ -11,7 +11,7 @@ const STORAGE_STATIONS_CACHE = 'hdhr_stations_cache';
 const STORAGE_STATIONS_LAST_SYNC = 'hdhr_stations_last_sync';
 const STORAGE_STATIONS_APP_VERSION = 'hdhr_stations_app_ver';
 const STATIONS_SYNC_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (weekly)
-const APP_VERSION = '2.0.93';
+const APP_VERSION = '2.0.94';
 
 /**
  * Calculates broadcast band (UHF / VHF), band detail, and physical RF channel number
@@ -4899,14 +4899,10 @@ function openPlayer(chNum, chName, streamUrl) {
 
   if (el.logo) {
     const stationInfo = getStationInfo(chName);
-    if (stationInfo && stationInfo.network) {
-      const net = stationInfo.network.toLowerCase();
-      const logoFile = NETWORK_LOGOS[net];
-      if (logoFile) {
-        el.logo.innerHTML = `<img src="assets/logos/${logoFile}" alt="${stationInfo.network}" />`;
-      } else {
-        el.logo.innerHTML = `<span class="badge badge-affiliate" style="font-size: 0.65rem; padding: 1px 4px;">${stationInfo.network}</span>`;
-      }
+    if (stationInfo && stationInfo.logo) {
+      el.logo.innerHTML = `<img src="${stationInfo.logo}" alt="${stationInfo.network || chName}" />`;
+    } else if (stationInfo && stationInfo.network) {
+      el.logo.innerHTML = `<span class="badge badge-affiliate" style="font-size: 0.65rem; padding: 1px 4px;">${stationInfo.network}</span>`;
     } else {
       el.logo.innerHTML = '';
     }
@@ -4955,12 +4951,6 @@ function stopPlayerStream() {
     } catch (e) {}
     playerState.abortController = null;
   }
-  if (playerState.demuxer) {
-    try {
-      playerState.demuxer.flush();
-    } catch (e) {}
-    playerState.demuxer = null;
-  }
   if (playerState.sync) {
     playerState.sync.stop();
   }
@@ -4970,7 +4960,6 @@ function stopPlayerStream() {
   if (playerState.renderer) {
     playerState.renderer.clear();
   }
-  playerState.streamReader = null;
   playerState.isPlaying = false;
   stopTunerStatusPolling();
   const el = getPlayerElements();
@@ -5170,23 +5159,6 @@ async function startPlayerStream(streamUrl) {
             break;
           }
 
-          case 'VIDEO_FRAME':
-            // Legacy per-frame handler (kept for cache transition compatibility)
-            if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
-              el.loadingOverlay.classList.add('fade-out');
-            }
-            if (playerState.sync) {
-              playerState.sync.queueVideoFrame({
-                pts: msg.pts,
-                width: msg.width,
-                height: msg.height,
-                isInterlaced: msg.isInterlaced,
-                y: msg.y,
-                u: msg.u,
-                v: msg.v,
-              });
-            }
-            break;
 
           case 'AUDIO_BATCH': {
             // Batch audio: entire segment's decoded PCM in one transfer
@@ -5216,22 +5188,6 @@ async function startPlayerStream(streamUrl) {
             break;
           }
 
-          case 'AUDIO_FRAME':
-            // Legacy per-frame handler (kept for cache transition compatibility)
-            if (playerState.audioPlayer) {
-              playerState.audioPlayer.queueAudio(
-                msg.left,
-                msg.right,
-                msg.pts,
-                msg.sampleRate || 48000
-              );
-            }
-            if (el.hudAudioCodec && msg.sampleRate) {
-              const sr = (msg.sampleRate / 1000).toFixed(1) + ' kHz';
-              const ch = msg.channels ? ` (${msg.channels}ch)` : '';
-              el.hudAudioCodec.textContent = `AC-3 ${sr}${ch}`;
-            }
-            break;
 
           case 'STATS': {
             const stats = msg.stats;
@@ -5256,6 +5212,20 @@ async function startPlayerStream(streamUrl) {
             break;
           }
 
+          case 'WORKER_LOG':
+            // Decode telemetry from the worker (segment timing, frame counts, etc.)
+            if (msg.text) console.debug('[worker]', msg.text);
+            break;
+
+          case 'READY':
+            // FFmpeg WASM core loaded successfully
+            if (el.loadingText) el.loadingText.textContent = 'Decoder ready...';
+            break;
+
+          case 'STREAM_DONE':
+            // Stream ended (fetch completed or flushed)
+            break;
+
           case 'ERROR':
             console.warn('Worker reported stream error:', msg.message);
             break;
@@ -5273,78 +5243,6 @@ async function startPlayerStream(streamUrl) {
     }
   }
 
-  // 2. Main-thread decoder fallback if Worker unavailable
-  if (!useWorker) {
-    let videoDecoder = null;
-    let audioDecoder = null;
-    if (typeof MPEG2VideoDecoder !== 'undefined') {
-      videoDecoder = new MPEG2VideoDecoder({
-        onFrame: (frame) => {
-          if (el.loadingOverlay && !el.loadingOverlay.classList.contains('fade-out')) {
-            el.loadingOverlay.classList.add('fade-out');
-          }
-          if (el.hudResolution && frame.width && frame.height) {
-            el.hudResolution.textContent = `${frame.width}x${frame.height}`;
-          }
-          if (playerState.sync) {
-            playerState.sync.queueVideoFrame(frame);
-          }
-        },
-      });
-    }
-    if (typeof AC3AudioDecoder !== 'undefined') {
-      audioDecoder = new AC3AudioDecoder({
-        onAudio: (audio) => {
-          if (playerState.audioPlayer) {
-            playerState.audioPlayer.queueAudio(audio.left, audio.right, audio.pts, audio.sampleRate);
-          }
-        },
-      });
-    }
-
-    if (typeof ATSCDemuxer !== 'undefined') {
-      playerState.demuxer = new ATSCDemuxer({
-        onPAT: () => {
-          if (el.loadingText) el.loadingText.textContent = 'Found Program (PAT)...';
-        },
-        onPMT: () => {
-          if (el.loadingText) el.loadingText.textContent = 'Found Stream Map (PMT)...';
-          if (el.hudVideoCodec && playerState.demuxer.videoStreamType) {
-            el.hudVideoCodec.textContent =
-              playerState.demuxer.videoStreamType === 0x02 ? 'MPEG-2 Video' : 'H.264 Video';
-          }
-          if (el.hudAudioCodec && playerState.demuxer.audioStreamType) {
-            el.hudAudioCodec.textContent =
-              playerState.demuxer.audioStreamType === 0x81 ? 'AC-3 Dolby Digital' : 'Audio';
-          }
-        },
-        onVideoData: ({ pts, data }) => {
-          if (videoDecoder) videoDecoder.decodePES(data, pts);
-        },
-        onAudioData: ({ pts, data }) => {
-          if (audioDecoder) audioDecoder.decodePES(data, pts);
-        },
-        onStats: (stats) => {
-          const now = performance.now();
-          const dt = (now - playerState.lastStatsTime) / 1000.0;
-          if (dt >= 0.5) {
-            const dBytes = stats.bytesParsed - playerState.lastStatsBytes;
-            const mbps = (dBytes * 8) / (dt * 1000000);
-            playerState.lastStatsTime = now;
-            playerState.lastStatsBytes = stats.bytesParsed;
-            if (el.hudBitrate) el.hudBitrate.textContent = `${mbps.toFixed(1)} Mbps`;
-            if (el.hudDropped) el.hudDropped.textContent = stats.packetsDropped.toString();
-            if (el.hudSync) {
-              const sign = stats.avSkewMs >= 0 ? '+' : '';
-              el.hudSync.textContent = `${sign}${stats.avSkewMs} ms`;
-            }
-          }
-        },
-        onError: (err) => console.warn('Demuxer error:', err),
-      });
-    }
-  }
-
   // 3. Network ingestion on Main Thread (inherits document permissions and private network access)
   try {
     const res = await fetch(streamUrl, { signal });
@@ -5353,24 +5251,19 @@ async function startPlayerStream(streamUrl) {
     }
 
     const reader = res.body.getReader();
-    playerState.streamReader = reader;
 
     while (playerState.isPlaying && playerState.isOpen) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      if (value && value.byteLength > 0) {
-        if (playerState.worker) {
-          let chunkBuf;
-          if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
-            chunkBuf = value.buffer;
-          } else {
-            chunkBuf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
-          }
-          playerState.worker.postMessage({ type: 'CHUNK', chunk: chunkBuf }, [chunkBuf]);
-        } else if (playerState.demuxer) {
-          playerState.demuxer.push(value);
+      if (value && value.byteLength > 0 && playerState.worker) {
+        let chunkBuf;
+        if (value.byteOffset === 0 && value.byteLength === value.buffer.byteLength) {
+          chunkBuf = value.buffer;
+        } else {
+          chunkBuf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
         }
+        playerState.worker.postMessage({ type: 'CHUNK', chunk: chunkBuf }, [chunkBuf]);
       }
     }
   } catch (err) {
@@ -5389,8 +5282,6 @@ async function startPlayerStream(streamUrl) {
   } finally {
     if (playerState.worker) {
       playerState.worker.postMessage({ type: 'FLUSH' });
-    } else if (playerState.demuxer) {
-      playerState.demuxer.flush();
     }
   }
 }

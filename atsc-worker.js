@@ -19,12 +19,10 @@ let demuxer = null;
 let streamBuffer = [];
 let streamBufferBytes = 0;
 let segmentIndex = 0;
-let streamPts = null;
 let streamVideoPts = null;
 let streamAudioPts = null;
 let currentSegmentVideoPts = null;
 let currentSegmentAudioPts = null;
-let nextGopVideoPts = null;
 let videoFps = 29.97;
 let videoWidth = 1920;
 let videoHeight = 1080;
@@ -462,12 +460,10 @@ function stopPipeline() {
   }
   streamBuffer = [];
   streamBufferBytes = 0;
-  streamPts = null;
   streamVideoPts = null;
   streamAudioPts = null;
   currentSegmentVideoPts = null;
   currentSegmentAudioPts = null;
-  nextGopVideoPts = null;
   videoFps = 29.97;
   savedPatPkt = null;
   savedPmtPkt = null;
