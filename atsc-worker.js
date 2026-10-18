@@ -281,11 +281,11 @@ function processSegment() {
       core.FS.writeFile(inName, merged);
       tDecode = performance.now();
 
-      // Adaptive probesize: 512KB for initial stream detection, 256KB after savedHeader
-      // is captured (PAT+PMT+SeqHdr prepended = FFmpeg needs less probing, but still
-      // needs enough to find AC-3 audio syncframes which may not be in the first 64KB)
-      const probeSize = savedHeader ? '262144' : '524288';
-      const analyzeDur = savedHeader ? '300000' : '500000';
+      // Fixed probesize: 512KB provides enough data for FFmpeg to reliably detect
+      // both MPEG-2 video and AC-3 audio streams. Smaller values (32KB, 64KB, 256KB)
+      // caused zero-frame segments where FFmpeg couldn't find AC-3 syncframes.
+      const probeSize = '524288';
+      const analyzeDur = '500000';
 
       runFFmpeg([
         '-probesize', probeSize,
@@ -394,6 +394,13 @@ function processSegment() {
       }, [yuvBuffer]);
 
       streamVideoPts = curVideoPts;
+    } else if (pcm && pcm.length > 0) {
+      // Zero video frames but audio was decoded — advance streamVideoPts to stay
+      // aligned with the audio clock. Without this, zero-frame segments cause
+      // streamVideoPts to stall while audio advances, creating a permanent PTS gap
+      // where all subsequent video frames are silently discarded as "discontinuities."
+      const audDurForPts = Math.floor(pcm.length / 8) / 48000;
+      streamVideoPts = segVideoStart + audDurForPts;
     }
 
     const tEnd = performance.now();
@@ -535,9 +542,12 @@ self.onmessage = function (e) {
             demuxer.push(prevTail);
           }
 
-          // 2. If the accumulated buffer has reached minimum segment threshold (>= 350 KB),
+          // 2. If the accumulated buffer has reached minimum segment threshold (>= 800 KB),
           // flush it as a complete segment now!
-          if (core && streamBufferBytes >= 350000) {
+          // 800KB ensures enough data for FFmpeg to reliably find AC-3 audio syncframes
+          // and decode video frames. CBS 3.1 has 2MB GOPs — the previous 350KB threshold
+          // caused 6 micro-segments per GOP with 37% zero-frame decode failures.
+          if (core && streamBufferBytes >= 800000) {
             processSegment();
             // Start new segment anchored to this GOP
             currentSegmentVideoPts = detectedGopPts !== null ? detectedGopPts : (demuxer ? demuxer.stats.lastVideoPts : null);
@@ -558,9 +568,12 @@ self.onmessage = function (e) {
           streamBufferBytes += uint8.length;
         }
 
-        // Mid-GOP fallback: force decode at 800KB even without a new sequence header
-        // Prevents large GOPs (e.g. CBS 3.1 = 2MB) from starving the audio pipeline
-        if (core && streamBufferBytes >= 800000) {
+        // Mid-GOP fallback: force decode at 8MB even without a new sequence header.
+        // With the 20-second deep playback buffer, we rarely need to split GOPs mid-stream.
+        // Typical ATSC 1.0 GOPs are 0.5-2.5MB, so 8MB allows even the largest GOPs
+        // (CBS 3.1 = 2MB) to accumulate whole. Splitting mid-GOP creates segments
+        // without I-frames that always decode to 0 video frames — pure waste.
+        if (core && streamBufferBytes >= 8000000) {
           processSegment();
         }
       }

@@ -370,20 +370,20 @@
         this.context.resume().catch(() => {});
       }
 
-      // Deep playback buffer: pre-fill 10 seconds of decoded audio before starting output.
-      // With 5× decode headroom (18% RT), the buffer stays full indefinitely.
-      // This absorbs ALL jitter — GC pauses, network hiccups, large GOPs, segment
-      // boundaries — making playback indistinguishable from a native TV player.
-      // Trade-off: ~10 second delay behind live broadcast (acceptable for OTA TV).
-      const INITIAL_CUSHION = 10.0;
+      // Deep playback buffer: pre-fill 20 seconds of decoded audio before starting output.
+      // With 5× decode headroom (18% RT), the buffer absorbs ALL jitter — GC pauses,
+      // network hiccups, large GOPs, segment boundaries, zero-frame segments — making
+      // playback indistinguishable from a native TV player.
+      // Trade-off: ~20 second delay behind live broadcast (acceptable for OTA TV).
+      const INITIAL_CUSHION = 20.0;
 
       let startTime = this.nextPlayTime;
       const isInitial = this.scheduledChunks.length === 0;
       const isUnderflow = !startTime || startTime < curTime;
-      const isOverAccumulated = startTime > curTime + 20.0;
+      const isOverAccumulated = startTime > curTime + 40.0;
 
       if (isInitial) {
-        // Buffer fill: schedule first audio 10s in the future
+        // Buffer fill: schedule first audio 20s in the future
         startTime = curTime + INITIAL_CUSHION;
       } else if (isUnderflow) {
         // Zero-gap underflow recovery: schedule immediately at current time
@@ -391,7 +391,7 @@
         startTime = curTime;
       } else if (isOverAccumulated) {
         // Clamp excessive queue accumulation if decode raced too far ahead
-        startTime = curTime + 12.0;
+        startTime = curTime + 25.0;
       }
 
       this.nextPlayTime = startTime + duration;
@@ -540,6 +540,7 @@
       this.lastFpsUpdate = performance.now();
       this.framesThisSecond = 0;
       this.lastNominalRenderTime = 0;
+      this.wasInCushion = false;  // Tracks cushion→playback transition
 
       this.renderLoopBound = this.renderLoop.bind(this);
     }
@@ -577,8 +578,8 @@
 
     queueVideoFrame(frame) {
       this.videoQueue.push(frame);
-      // Keep queue bounded to prevent memory growth (900 frames = 15s at 60fps / 30s at 30fps)
-      if (this.videoQueue.length > 900) {
+      // Keep queue bounded to prevent memory growth (1500 frames = 25s at 60fps / 50s at 30fps)
+      if (this.videoQueue.length > 1500) {
         this.videoQueue.shift();
         this.droppedFrames++;
       }
@@ -589,10 +590,11 @@
       this.lastRenderLoopTime = performance.now();
 
       // During deep buffer cushion (pre-fill phase), hold all video frames.
-      // The interpolated master clock PTS is ~10s behind actual video PTS during this
+      // The interpolated master clock PTS is ~20s behind actual video PTS during this
       // phase, which would trigger the discontinuity detector and silently discard
       // every frame. Wait until audio actually starts playing from the speakers.
       if (this.audio && this.audio.isInCushion && this.audio.isInCushion()) {
+        this.wasInCushion = true;
         if (typeof requestAnimationFrame !== 'undefined') {
           this.animId = requestAnimationFrame(this.renderLoopBound);
         }
@@ -600,6 +602,27 @@
       }
 
       const masterPts = this.audio ? this.audio.getMasterClockPts() : null;
+
+      // On cushion→playback transition: silently fast-forward video queue to match
+      // the current audio master clock position. During the 20s cushion, video frames
+      // accumulated with PTS values that may be ahead of or behind the audio clock
+      // starting point. Skip to the nearest presentable frame without counting as drops.
+      if (this.wasInCushion && masterPts !== null && this.videoQueue.length > 0) {
+        this.wasInCushion = false;
+        let skipped = 0;
+        while (this.videoQueue.length > 1) {
+          const next = this.videoQueue[0];
+          if (next.pts === null || isNaN(next.pts)) break;
+          const delta = next.pts - masterPts;
+          // Keep frames that are within 100ms of the audio clock or ahead of it
+          if (delta >= -0.100) break;
+          this.videoQueue.shift();
+          skipped++;
+        }
+        if (skipped > 0) {
+          console.log(`[AVSync] Cushion exit: fast-forwarded ${skipped} frames to match audio clock`);
+        }
+      }
 
       if (masterPts !== null) {
         // Synchronize video presentation to audio master clock

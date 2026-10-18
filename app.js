@@ -5140,7 +5140,7 @@ async function startPlayerStream(streamUrl) {
                 const nextPlay = playerState.audioPlayer.nextPlayTime;
                 const buffered = nextPlay - ctx.currentTime;
                 if (buffered > 0 && el.loadingText) {
-                  const pct = Math.min(100, Math.round(buffered / 10.0 * 100));
+                  const pct = Math.min(100, Math.round(buffered / 20.0 * 100));
                   el.loadingText.textContent = `Buffering... ${pct}%`;
                 }
                 // Dismiss loading overlay once audio starts playing (buffer full)

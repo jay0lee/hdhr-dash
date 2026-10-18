@@ -9,8 +9,9 @@
 <script>
 // Deep buffer validation test — single channel, 60 seconds
 // Designed for both headless CDP testing and visual browser testing
-const CHANNEL = '10.1';
-const DURATION = 60000; // 60 seconds
+const urlParams = new URLSearchParams(window.location.search);
+const CHANNEL = urlParams.get('ch') || window.OVERRIDE_CHANNEL || '10.1';
+const DURATION = parseInt(urlParams.get('dur') || '60000');
 const HDHR = 'http://10.1.0.4:5004/auto/v';
 
 function log(msg) {
@@ -133,7 +134,7 @@ window.T = {
     const playbackStarted = firstChunkStart !== null && ctx.currentTime >= firstChunkStart;
 
     window.T.bufferSec = Math.round(buffered * 10) / 10;
-    window.T.bufferPct = Math.min(100, Math.round(Math.max(0, buffered) / 10.0 * 100));
+    window.T.bufferPct = Math.min(100, Math.round(Math.max(0, buffered) / 20.0 * 100));
     window.T.audioStarved = starved;
     window.T.masterPts = masterPts;
 
